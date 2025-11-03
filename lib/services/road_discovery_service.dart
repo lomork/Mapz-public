@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:isar/isar.dart';
 import 'package:http/http.dart' as http;
@@ -209,23 +210,61 @@ class RoadDiscoveryService {
     return roads.map((road) => LatLng(road.latitude, road.longitude)).toList();
   }
 
+  Future<double> getCloudDiscoveryPercentage(String country) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return 0.0; // Not logged in
+
+    final userDocRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
+    try {
+      final doc = await userDocRef.get();
+
+      if (doc.exists && doc.data()!.containsKey('discovery')) {
+        final discoveryData = doc.data()!['discovery'] as Map<String, dynamic>;
+        if (discoveryData.containsKey(country)) {
+          // Ensure it's a double, as Firestore can store numbers as int or double
+          return (discoveryData[country] as num).toDouble();
+        }
+      }
+    } catch (e) {
+      print("Could not fetch cloud percentage: $e");
+    }
+    return 0.0; // Default to 0 if not found or on error
+  }
+
   // Updates your cloud database (e.g., Firebase) with the new percentage
-  Future<void> updateCloudPercentage(double percentage, String country) async {
+  Future<void> updateCloudPercentage(double localPercentage, String country) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return; // Not logged in, can't save.
 
     final userDocRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
 
     try {
-      // This command updates the user's document in Firestore.
-      await userDocRef.set({
-        'displayName': user.displayName,
-        'photoURL': user.photoURL,
-        'discovery': {
-          country: percentage,
+      // --- READ FROM FIREBASE FIRST ---
+      final doc = await userDocRef.get();
+      double cloudPercentage = 0.0;
+
+      if (doc.exists && doc.data()!.containsKey('discovery')) {
+        final discoveryData = doc.data()!['discovery'] as Map<String, dynamic>;
+        if (discoveryData.containsKey(country)) {
+          cloudPercentage = (discoveryData[country] as num).toDouble();
         }
-      }, SetOptions(merge: true)); // merge:true is crucial to avoid erasing data for other countries.
-      print("Successfully synced discovery percentage for $country to Firestore.");
+      }
+
+      // --- COMPARE AND ONLY WRITE IF HIGHER ---
+      if (localPercentage > cloudPercentage) {
+        // The local value is newer/higher, so we save it.
+        await userDocRef.set({
+          'displayName': user.displayName,
+          'photoURL': user.photoURL,
+          'discovery': {
+            country: localPercentage, // Save the bigger number
+          }
+        }, SetOptions(merge: true));
+        print("Successfully synced NEW discovery percentage for $country to Firestore.");
+      } else {
+        // The cloud value is higher. Do nothing.
+        print("Cloud percentage is already higher ($cloudPercentage) than local ($localPercentage). No update needed.");
+      }
     } catch (e) {
       print("Could not update percentage on cloud: $e");
     }

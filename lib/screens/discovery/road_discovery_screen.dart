@@ -38,6 +38,7 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
   List<LeaderboardUser> _sharingRankings = [];
   double _currentUserRotation = 0.0;
   String? _currentCountry;
+  String _selectedCountry = '';
 
   GoogleMapController? _atlasMapController;
   StreamSubscription<LocationData>? _locationSubscription;
@@ -64,6 +65,7 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
         setState(() {});
       }
     });
+    _loadDiscoveryData();
     _loadMapStyles();
     _loadMarkerIcon();
     _initAtlasLocation();
@@ -76,9 +78,9 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
     final newCountry = context.watch<SettingsProvider>().selectedCountry;
 
     // If the country has changed (or it's the first time loading), fetch all new data
-    if (_currentCountry != newCountry) {
-      _currentCountry = newCountry;
-      _loadAllData();
+    if (_selectedCountry != newCountry) {
+      _selectedCountry = newCountry;
+      _loadDiscoveryData();
     }
   }
 
@@ -470,6 +472,39 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _loadDiscoveryData() async {
+    if (!mounted) return;
+    setState(() => _isLoading = true);
+
+    // Get the service and country from providers
+    final service = context.read<RoadDiscoveryService>();
+    final country = context.read<SettingsProvider>().selectedCountry;
+
+    // 1. Get BOTH local and cloud percentages in parallel
+    final results = await Future.wait([
+      service.calculateDiscoveryPercentage(country), // Local
+      service.getCloudDiscoveryPercentage(country)  // Cloud
+    ]);
+
+    final double localPercentage = results[0];
+    final double cloudPercentage = results[1];
+
+    // 2. Find the *highest* value to show the user
+    final double finalPercentage = max(localPercentage, cloudPercentage);
+
+    // 3. Update the UI with the highest value
+    if (mounted) {
+      setState(() {
+        _discoveryPercentage = finalPercentage;
+        _isLoading = false;
+      });
+    }
+
+    // 4. (Separately) Try to sync the local value up, if it's higher
+    // This function already has the (local > cloud) check inside it, so it's safe.
+    await service.updateCloudPercentage(localPercentage, country);
   }
 
   Future<void> _loadMapStyles() async {
