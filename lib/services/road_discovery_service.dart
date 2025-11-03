@@ -22,6 +22,8 @@ class RoadDiscoveryService {
   final NotificationService _notificationService = NotificationService();
   StreamSubscription<LocationData>? _locationSubscription;
 
+  bool _isHighAccuracy = false;
+
   Timer? _stopTimer;
   bool _isNotificationActive = false;
   static const double _speedThreshold = 1.0;
@@ -47,27 +49,57 @@ class RoadDiscoveryService {
   void _handleLocationUpdate(LocationData locationData) {
     if (locationData.latitude == null || locationData.longitude == null) return;
 
-    // 1. Pass the location to your existing road discovery logic
     final newPoint = LatLng(locationData.latitude!, locationData.longitude!);
-    addLocationPoint(newPoint);
 
-    // 2. Handle the smart notification logic
+
     final speed = locationData.speed ?? 0.0;
 
     if (speed > _speedThreshold) { // User is moving
       _stopTimer?.cancel();
+      if (!_isHighAccuracy) {
+        _location.changeSettings(
+          accuracy: LocationAccuracy.high, // Switch to high accuracy
+          interval: 1000, // 1 second
+          distanceFilter: 2,  // 2 meters
+        );
+        _isHighAccuracy = true;
+        print("MOVEMENT DETECTED: Switching to HIGH accuracy.");
+        _location.changeNotificationOptions(
+          channelName: 'Road Discovery',
+          title: 'Road Discovery Activated', // MOVING state
+          description: 'Tracking your journey to discover new roads.',
+          iconName: '@drawable/ic_mapz_notification',
+        );
+      }
       if (!_isNotificationActive) {
         _notificationService.showDiscoveryActiveNotification();
         _isNotificationActive = true;
       }
+      addLocationPoint(newPoint);
     } else { // User has stopped
-      if (_stopTimer == null || !_stopTimer!.isActive) {
-        _stopTimer = Timer(const Duration(minutes: 1), () {
-          if (_isNotificationActive) {
-            _notificationService.cancelDiscoveryActiveNotification();
-            _isNotificationActive = false;
-          }
-        });
+      if (_isHighAccuracy) {
+        if (_stopTimer == null || !_stopTimer!.isActive) {
+          print("STOP DETECTED: Starting 1-minute timer to switch to LOW accuracy.");
+          _stopTimer = Timer(const Duration(minutes: 1), () {
+            _location.changeSettings(
+              accuracy: LocationAccuracy.low, // Switch back to low accuracy
+              interval: 30000, // 30 seconds
+              distanceFilter: 50, // 50 meters
+            );
+            _isHighAccuracy = false;
+            print("TIMER ELAPSED: Switched to LOW accuracy.");
+            _location.changeNotificationOptions(
+              channelName: 'Road Discovery',
+              title: 'Road Discovery Idling', // IDLING state
+              description: 'Waiting for movement to start discovery.',
+              iconName: '@drawable/ic_mapz_notification',
+            );
+            if (_isNotificationActive) {
+              _notificationService.cancelDiscoveryActiveNotification();
+              _isNotificationActive = false;
+            }
+          });
+        }
       }
     }
   }
@@ -87,12 +119,29 @@ class RoadDiscoveryService {
     }
 
     await _location.enableBackgroundMode(enable: true);
+
+    await _location.changeNotificationOptions(
+      channelName: 'Road Discovery',
+      title: 'Road Discovery Idling', // Initial state
+      description: 'Waiting for movement to start discovery.',
+      iconName: '@drawable/ic_mapz_notification', // From your notification_service.dart
+      // We use the icon from your service, but let the location package manage the notification.
+    );
+
+    _isHighAccuracy = false;
+    await _location.changeSettings(
+      accuracy: LocationAccuracy.low, // Use low accuracy to save power
+      interval: 30000, // Check every 30 seconds
+      distanceFilter: 50, // Only update if moved 50 meters
+    );
+
     _locationSubscription?.cancel();
     _locationSubscription = _location.onLocationChanged.listen(_handleLocationUpdate);
   }
 
   // --- NEW: Method to stop the service ---
   void stopDiscovery() {
+    _location.enableBackgroundMode(enable: false);
     _locationSubscription?.cancel();
     _notificationService.cancelDiscoveryActiveNotification();
     _isNotificationActive = false;

@@ -49,5 +49,13 @@
     <array>
       <string>mailto</string>
     </array>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    	<string>We need your location to show you on the map and discover new roads.</string>
+    	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    	<string>This app needs your location in the background to discover new roads you drive on.</string>
+    	<key>UIBackgroundModes</key>
+    	<array>
+    		<string>location</string>
+    	</array>
 </dict>
 </plist>

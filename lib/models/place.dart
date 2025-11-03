@@ -87,6 +87,7 @@ class Place {
   final LatLng coordinates;
   final double? rating;
   final bool? isOpenNow;
+  final List<String> types;
 
   Place({
     required this.placeId,
@@ -95,6 +96,7 @@ class Place {
     required this.coordinates,
     this.rating,
     this.isOpenNow,
+    this.types = const [],
   });
 
   factory Place.fromJson(Map<String, dynamic> json) {
@@ -108,6 +110,7 @@ class Place {
       ),
       rating: json['rating']?.toDouble(),
       isOpenNow: json['opening_hours']?['open_now'],
+      types: (json['types'] as List<dynamic>).map((e) => e.toString()).toList(),
     );
   }
 }

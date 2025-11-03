@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:uuid/uuid.dart';
+import 'package:flutter/foundation.dart';
 
 import '../api/google_maps_api_service.dart';
 import '../models/place.dart';
@@ -91,6 +92,36 @@ class MapProvider with ChangeNotifier {
     return ['All', 'Top Rated', 'Open Now'];
   }
 
+  // --- ADD THIS NEW HELPER FUNCTION ---
+  IconData _getIconForPlace(Place place) {
+    final types = place.types;
+
+    if (types.contains('restaurant') || types.contains('meal_takeaway')) {
+      return Icons.restaurant;
+    }
+    if (types.contains('cafe')) {
+      return Icons.coffee;
+    }
+    if (types.contains('store') || types.contains('shopping_mall')) {
+      return Icons.store;
+    }
+    if (types.contains('park')) {
+      return Icons.park;
+    }
+    if (types.contains('gas_station')) {
+      return Icons.local_gas_station;
+    }
+    if (types.contains('library')) {
+      return Icons.local_library;
+    }
+    if (types.contains('lodging')) {
+      return Icons.hotel;
+    }
+
+    // Default fallback icon
+    return Icons.place;
+  }
+
   void fetchSuggestions(String input, {LatLng? userLocation}) {
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 300), () async {
@@ -105,7 +136,7 @@ class MapProvider with ChangeNotifier {
                 .toList();
           }
         } catch (e) {
-          print("Error fetching suggestions: $e");
+          debugPrint("Error fetching suggestions: $e");
           _suggestions = [];
         }
       } else {
@@ -189,7 +220,7 @@ class MapProvider with ChangeNotifier {
         );
       }
     } catch (e) {
-      print("Error selecting place: $e");
+      debugPrint("Error selecting place: $e");
     } finally {
       // Clean up search state and notify the UI of the final result
       _sessionToken = null;
@@ -223,7 +254,7 @@ class MapProvider with ChangeNotifier {
           final icon = await _createCustomMarker(
               place.name,
               place.isOpenNow == true ? 'Open' : 'Closed',
-              Icons.local_library // Example icon, you can make this dynamic
+              _getIconForPlace(place)
           );
           _markers.add(
             Marker(
@@ -239,7 +270,7 @@ class MapProvider with ChangeNotifier {
         }
       }
     } catch (e) {
-      print("Error during nearby search: $e");
+      debugPrint("Error during nearby search: $e");
     }
     notifyListeners(); // Notify UI with the final list and markers
   }

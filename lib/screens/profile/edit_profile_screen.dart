@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -16,21 +17,33 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _formKey = GlobalKey<FormState>();
   late TextEditingController _nameController;
   final User? _user = FirebaseAuth.instance.currentUser;
+  final _firestore = FirebaseFirestore.instance;
+  final _auth = FirebaseAuth.instance;
 
   File? _imageFile;
   String? _networkImageUrl;
   bool _isLoading = false;
+
+  Timer? _debounce;
+  String? _usernameErrorText;
+  bool _isUsernameAvailable = true; // Default to true (for unchanged name)
+  bool _isCheckingUsername = false;
+  late String _originalUsername;
 
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: _user?.displayName ?? '');
     _networkImageUrl = _user?.photoURL;
+    _originalUsername = _user?.displayName?.toLowerCase() ?? '';
+    _nameController.addListener(_onUsernameChanged);
   }
 
   @override
   void dispose() {
+    _nameController.removeListener(_onUsernameChanged);
     _nameController.dispose();
+    _debounce?.cancel();
     super.dispose();
   }
 
@@ -41,6 +54,54 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         _imageFile = File(pickedFile.path);
       });
     }
+  }
+
+  void _onUsernameChanged() {
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+
+    final String newUsername = _nameController.text.trim().toLowerCase();
+
+    // If the name is the same as the original, it's valid.
+    if (newUsername == _originalUsername) {
+      setState(() {
+        _isCheckingUsername = false;
+        _isUsernameAvailable = true;
+        _usernameErrorText = null;
+      });
+      return;
+    }
+
+    // If it's a new name, start checking
+    setState(() {
+      _isCheckingUsername = true;
+      _usernameErrorText = null;
+    });
+
+    _debounce = Timer(const Duration(milliseconds: 500), () async {
+      final String username = _nameController.text.trim();
+      if (username.length < 3) {
+        setState(() {
+          _usernameErrorText = 'Username must be at least 3 characters';
+          _isUsernameAvailable = false;
+          _isCheckingUsername = false;
+        });
+        return;
+      }
+
+      final isTaken = await _isUsernameTaken(username);
+      if (mounted) {
+        setState(() {
+          if (isTaken) {
+            _usernameErrorText = 'This username is already taken';
+            _isUsernameAvailable = false;
+          } else {
+            _usernameErrorText = null;
+            _isUsernameAvailable = true;
+          }
+          _isCheckingUsername = false;
+        });
+      }
+    });
   }
 
   Future<String?> _uploadProfilePicture(File image, String userId) async {
@@ -55,12 +116,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  Future<bool> _isUsernameTaken(String username) async {
+    final String normalizedUsername = username.toLowerCase();
+
+    final query = await FirebaseFirestore.instance
+        .collection('users')
+        .where('username_lowercase', isEqualTo: normalizedUsername)
+        .limit(1)
+        .get();
+
+    return query.docs.isNotEmpty;
+  }
+
   Future<void> _saveProfile() async {
     if (_user == null) return;
     if (_formKey.currentState!.validate()) {
       setState(() => _isLoading = true);
 
       String? newPhotoUrl = _networkImageUrl;
+
+      if (_isCheckingUsername) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please wait, checking username...')),
+        );
+        return;
+      }
+
+      final String newUsername = _nameController.text.trim();
+      final User? user = _auth.currentUser;
 
       // 1. Upload new image if one was selected
       if (_imageFile != null) {
@@ -69,20 +152,46 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       // 2. Update Firebase Auth profile
       try {
-        await _user!.updateDisplayName(_nameController.text);
-        if (newPhotoUrl != null) {
-          await _user!.updatePhotoURL(newPhotoUrl);
+        if (newUsername.toLowerCase() != user!.displayName?.toLowerCase()) {
+          final bool isTaken = await _isUsernameTaken(newUsername);
+          if (isTaken) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('This username is already taken. Please try another.'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+            setState(() => _isLoading = false);
+            return; // Stop the save process
+          }
+        }
+        await user.updateDisplayName(newUsername);
+
+        await _firestore.collection('users').doc(user.uid).update({
+          'displayName': newUsername,
+          'username_lowercase': newUsername.toLowerCase(), // <-- SAVE THE LOWERCASE FIELD
+        });
+
+        if (_imageFile != null) {
+          final ref = FirebaseStorage.instance
+              .ref()
+              .child('user_profiles')
+              .child('${user.uid}.jpg');
+
+          await ref.putFile(_imageFile!);
+          final url = await ref.getDownloadURL();
+
+          await user.updatePhotoURL(url);
+          await _firestore.collection('users').doc(user.uid).update({'photoURL': url});
         }
 
-        // 3. Update Firestore document (to keep leaderboards in sync)
-        await FirebaseFirestore.instance.collection('users').doc(_user!.uid).set({
-          'displayName': _nameController.text,
-          'photoURL': newPhotoUrl,
-        }, SetOptions(merge: true));
-
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile updated successfully!")));
-        Navigator.of(context).pop();
-
+        if(mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Profile updated successfully!")));
+          Navigator.of(context).pop();
+        }
       } catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Failed to update profile: $e")));
       } finally {
@@ -137,13 +246,28 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             const SizedBox(height: 24),
             TextFormField(
               controller: _nameController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: "Display Name",
-                border: OutlineInputBorder(),
+                border: const OutlineInputBorder(),
+                errorText: _usernameErrorText,
+                suffixIcon: _isCheckingUsername
+                    ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                    : (_isUsernameAvailable &&
+                    !_isCheckingUsername &&
+                    _nameController.text.isNotEmpty &&
+                    _nameController.text.trim().toLowerCase() != _originalUsername)
+                    ? const Icon(Icons.check_circle, color: Colors.green)
+                    : null,
               ),
               validator: (value) {
-                if (value == null || value.isEmpty) {
+                if (value == null || value.trim().isEmpty) {
                   return 'Please enter a display name';
+                }
+                if (value.trim().length < 3) {
+                  return 'Username must be at least 3 characters';
                 }
                 return null;
               },
