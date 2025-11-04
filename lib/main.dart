@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:mapz/providers/fake_location_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:isar/isar.dart';
@@ -42,8 +43,13 @@ Future<void> main() async {
         Provider<GoogleMapsApiService>(
           create: (_) => GoogleMapsApiService(),
         ),
-        Provider<RoadDiscoveryService>(
-          create: (context) => RoadDiscoveryService(isar, context.read<GoogleMapsApiService>()),
+        ProxyProvider<FakeLocationProvider, RoadDiscoveryService>(
+          update: (context, fakeLocationProvider, previous) =>
+              RoadDiscoveryService(
+                context.read<Isar>(),
+                context.read<GoogleMapsApiService>(),
+                fakeLocationProvider, // This is the new dependency
+              ),
         ),
         Provider<LeaderboardService>(
           create: (_) => LeaderboardService(),
@@ -56,6 +62,7 @@ Future<void> main() async {
         ChangeNotifierProvider<SettingsProvider>(
           create: (_) => SettingsProvider(),
         ),
+        ChangeNotifierProvider(create: (_) => FakeLocationProvider()),
       ],
       child: const MyApp(),
     ),

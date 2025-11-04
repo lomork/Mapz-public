@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:country_picker/country_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +13,8 @@ import '../../services/leaderboard_service.dart';
 import '../../services/road_discovery_service.dart';
 import '../auth/auth_gate.dart';
 import '../../providers/settings_provider.dart';
+
+import 'accessibility_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -50,6 +53,8 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
 
   bool _isSyncing = false;
 
+  bool _hasSpecialOffer = false;
+
   @override
   bool get wantKeepAlive => true;
 
@@ -83,17 +88,30 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
     setState(() => _isLoading = true);
 
     if (_currentCountry == null) {
-      setState(() => _isLoading = false);
-      return;
+      _currentCountry = context.read<SettingsProvider>().selectedCountry;
     }
-    // Read the current country from the provider
-    final selectedCountry = context.read<SettingsProvider>().selectedCountry;
-
     final discoveryService = context.read<RoadDiscoveryService>();
     final leaderboardService = context.read<LeaderboardService>();
 
-    final percentage = await discoveryService.calculateDiscoveryPercentage(_currentCountry!);
-    final rankings = await leaderboardService.getNationalLeaderboard(_currentCountry!);
+    final userDocFuture = FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.user.uid)
+        .get();
+
+    final percentageFuture =
+    discoveryService.calculateDiscoveryPercentage(_currentCountry!);
+    final rankingsFuture =
+    leaderboardService.getNationalLeaderboard(_currentCountry!);
+
+    final results = await Future.wait([
+      percentageFuture,
+      rankingsFuture,
+      userDocFuture,
+    ]);
+
+    final percentage = results[0] as double;
+    final rankings = results[1] as List<LeaderboardUser>;
+    final userDoc = results[2] as DocumentSnapshot<Map<String, dynamic>>;
 
     int? rank;
     final userIndex = rankings.indexWhere((u) => u.name == widget.user.displayName);
@@ -101,10 +119,20 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
       rank = userIndex + 1;
     }
 
+    bool offerFlag = false;
+    if (userDoc.exists && userDoc.data() != null) {
+      final data = userDoc.data()!;
+      if (data.containsKey('has_special_offer') &&
+          data['has_special_offer'] == true) {
+        offerFlag = true;
+      }
+    }
+
     if (mounted) {
       setState(() {
         _discoveryPercent = percentage;
         _nationalRank = rank;
+        _hasSpecialOffer = offerFlag;
         _isLoading = false;
       });
     }
@@ -373,6 +401,24 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
                   child: const Text("LEGAL"),
                 ),
                 const SizedBox(height: 8),
+                if (_hasSpecialOffer)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8.0),
+                    child: OutlinedButton(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => const AccessibilityScreen(),
+                          ),
+                        );
+                      },
+                      style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.blue,
+                          side: const BorderSide(color: Colors.blue)),
+                      child: const Text("ACCESSIBILITY"),
+                    ),
+                  ),
+
                 OutlinedButton(
                   onPressed: () async {
                     await FirebaseAuth.instance.signOut();

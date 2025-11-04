@@ -10,11 +10,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/discovered_road.dart';
 import '../api/google_maps_api_service.dart';
+import '../providers/fake_location_provider.dart';
 import 'notification_service.dart';
+import '../providers/fake_location_provider.dart';
 
 class RoadDiscoveryService {
   final Isar isar;
   final GoogleMapsApiService _apiService;
+  final FakeLocationProvider _fakeLocationProvider;
 
   final List<LatLng> _pathBuffer = [];
   final int _batchSize = 50;
@@ -23,13 +26,15 @@ class RoadDiscoveryService {
   final NotificationService _notificationService = NotificationService();
   StreamSubscription<LocationData>? _locationSubscription;
 
+  StreamSubscription<LocationData>? _fakeLocationSubscription;
+
   bool _isHighAccuracy = false;
 
   Timer? _stopTimer;
   bool _isNotificationActive = false;
   static const double _speedThreshold = 1.0;
 
-  RoadDiscoveryService(this.isar, this._apiService);
+  RoadDiscoveryService(this.isar, this._apiService, this._fakeLocationProvider);
 
   Future<void> addDrivenPath(List<LatLng> path) async {
 
@@ -47,7 +52,7 @@ class RoadDiscoveryService {
     }
   }
 
-  void _handleLocationUpdate(LocationData locationData) {
+  void _handleLocationUpdate(LocationData locationData, {bool isFaking = false}) {
     if (locationData.latitude == null || locationData.longitude == null) return;
 
     final newPoint = LatLng(locationData.latitude!, locationData.longitude!);
@@ -121,6 +126,7 @@ class RoadDiscoveryService {
 
     await _location.enableBackgroundMode(enable: true);
 
+
     await _location.changeNotificationOptions(
       channelName: 'Road Discovery',
       title: 'Road Discovery Idling', // Initial state
@@ -138,6 +144,33 @@ class RoadDiscoveryService {
 
     _locationSubscription?.cancel();
     _locationSubscription = _location.onLocationChanged.listen(_handleLocationUpdate);
+
+    _locationSubscription?.cancel();
+    _fakeLocationSubscription?.cancel();
+
+    _locationSubscription = _location.onLocationChanged.listen((locationData) {
+      if (!_fakeLocationProvider.isFaking) {
+        _handleLocationUpdate(locationData);
+      }
+    });
+
+    _fakeLocationSubscription =
+        _fakeLocationProvider.fakeLocationStream.listen((locationData) {
+          // --- THIS IS YOUR NEW ADMIN LOGIC ---
+          if (_fakeLocationProvider.isFaking) {
+            // Only process the point if the user is an admin
+            if (_fakeLocationProvider.isAdmin) {
+              _handleLocationUpdate(locationData, isFaking: true);
+            } else {
+              // If not an admin, we still update the notification
+              // but do NOT call _handleLocationUpdate (which saves points).
+              _location.changeNotificationOptions(
+                title: 'FAKE GPS ACTIVE',
+                description: 'Discovery paused. Admin mode is off.',
+              );
+            }
+          }
+        });
   }
 
   // --- NEW: Method to stop the service ---

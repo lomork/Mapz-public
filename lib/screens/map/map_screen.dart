@@ -29,6 +29,7 @@ import '../../providers/map_provider.dart';
 import 'directions_screen.dart';
 import '../discovery/road_discovery_screen.dart';
 import '../../providers/settings_provider.dart';
+import 'package:mapz/providers/fake_location_provider.dart';
 
 class MapScreen extends StatefulWidget {
   final User user;
@@ -47,6 +48,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
   final Location _locationService = Location();
   final Set<Marker> _markers = {};
   StreamSubscription<LocationData>? _locationSubscription;
+  StreamSubscription<LocationData>? _fakeLocationSubscription;
   int _currentIndex = 0;
 
   bool _isProfileMenuVisible = false;
@@ -225,56 +227,73 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
 
   Future<void> _listenToLocationChanges() async {
     final locationService = Location();
+    final fakeLocationProvider = context.read<FakeLocationProvider>(); // <-- ADD THIS
+
     await locationService.changeSettings(
       accuracy: LocationAccuracy.high,
       interval: 1000,
       distanceFilter: 2,
     );
+
+    _locationSubscription?.cancel();
+    _fakeLocationSubscription?.cancel();
+
+    // 1. Listen to REAL GPS
     _locationSubscription =
         locationService.onLocationChanged.listen((LocationData currentLocation) {
-          if (!mounted || currentLocation.latitude == null || currentLocation.longitude == null) return;
-
-          final newLatLng = LatLng(currentLocation.latitude!, currentLocation.longitude!);
-          final newRotation = currentLocation.heading ?? _previousRotation;
-
-          // If this is the first location update, set the position without animating
-          if (_previousLatLng == null) {
-            setState(() {
-              _currentUserLatLng = newLatLng;
-              _currentUserRotation = newRotation;
-              _previousLatLng = newLatLng;
-              _previousRotation = newRotation;
-            });
-            return;
-          }
-
-          // --- NEW: Animate from the previous position to the new one ---
-          _positionAnimation = LatLngTween(begin: _previousLatLng!, end: newLatLng)
-              .animate(_markerAnimationController!);
-
-          // Animate rotation for a smoother turn
-          _rotationAnimation = Tween<double>(begin: _previousRotation, end: newRotation)
-              .animate(_markerAnimationController!);
-
-          _markerAnimationController!.forward(from: 0.0).whenComplete(() {
-            // After animation, update the previous values for the next cycle
-            _previousLatLng = newLatLng;
-            _previousRotation = newRotation;
-          });
-
-          final discoveryService = context.read<RoadDiscoveryService>();
-          discoveryService.addLocationPoint(newLatLng);
-
-          if (_isFollowingUser) {
-            mapController.animateCamera(CameraUpdate.newCameraPosition(
-              CameraPosition(
-                  target: newLatLng,
-                  zoom: 17.5,
-                  bearing: newRotation,
-                  tilt: 50.0),
-            ));
+          if (!fakeLocationProvider.isFaking) {
+            _updateUserLocation(currentLocation);
           }
         });
+
+    // 2. Listen to FAKE GPS
+    _fakeLocationSubscription =
+        fakeLocationProvider.fakeLocationStream.listen((LocationData currentLocation) {
+          // Map screen ALWAYS shows fake location
+          if (fakeLocationProvider.isFaking) {
+            _updateUserLocation(currentLocation);
+          }
+        });
+  }
+
+  void _updateUserLocation(LocationData currentLocation) {
+    if (!mounted ||
+        currentLocation.latitude == null ||
+        currentLocation.longitude == null) return;
+
+    final newLatLng = LatLng(currentLocation.latitude!, currentLocation.longitude!);
+    final newRotation = currentLocation.heading ?? _previousRotation;
+
+    if (_previousLatLng == null) {
+      setState(() {
+        _currentUserLatLng = newLatLng;
+        _currentUserRotation = newRotation;
+        _previousLatLng = newLatLng;
+        _previousRotation = newRotation;
+      });
+      return;
+    }
+
+    _positionAnimation = LatLngTween(begin: _previousLatLng!, end: newLatLng)
+        .animate(_markerAnimationController!);
+
+    _rotationAnimation = Tween<double>(begin: _previousRotation, end: newRotation)
+        .animate(_markerAnimationController!);
+
+    _markerAnimationController!.forward(from: 0.0).whenComplete(() {
+      _previousLatLng = newLatLng;
+      _previousRotation = newRotation;
+    });
+
+    if (_isFollowingUser) {
+      mapController.animateCamera(CameraUpdate.newCameraPosition(
+        CameraPosition(
+            target: newLatLng,
+            zoom: 17.5,
+            bearing: newRotation,
+            tilt: 50.0),
+      ));
+    }
   }
 
   Future<void> _loadMapStyles() async {

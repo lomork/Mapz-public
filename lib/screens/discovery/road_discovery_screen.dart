@@ -7,10 +7,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:location/location.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui' as ui;
+import 'dart:ui';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../../providers/fake_location_provider.dart';
 
 import '../../models/discovery/achievement.dart';
 import '../../models/discovery/leaderboard_user.dart';
@@ -74,13 +76,14 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Get the latest country from the provider
+    // We get the new country from the provider
     final newCountry = context.watch<SettingsProvider>().selectedCountry;
 
-    // If the country has changed (or it's the first time loading), fetch all new data
+    // --- THIS 'IF' STATEMENT IS THE FIX ---
+    // If the country has changed, reload the data
     if (_selectedCountry != newCountry) {
       _selectedCountry = newCountry;
-      _loadDiscoveryData();
+      _loadDiscoveryData(); // Reload all data for the new country
     }
   }
 
@@ -158,13 +161,50 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
     }
   }
 
+  Future<void> _loadDiscoveryData() async {
+    if (!mounted) return;
+    setState(() => _isLoading = true);
 
+    // Get the service and country from providers
+    final service = context.read<RoadDiscoveryService>();
+    final country = context.read<SettingsProvider>().selectedCountry;
+
+    // 1. Get BOTH local and cloud percentages in parallel
+    final results = await Future.wait([
+      service.calculateDiscoveryPercentage(country), // Local
+      service.getCloudDiscoveryPercentage(country)  // Cloud
+    ]);
+
+    final double localPercentage = results[0];
+    final double cloudPercentage = results[1];
+
+    // 2. Find the *highest* value to show the user
+    final double finalPercentage = max(localPercentage, cloudPercentage);
+
+    final Tier currentTier = TierManager.getTier(finalPercentage);
+
+    // 3. Update the UI with the highest value
+    if (mounted) {
+      setState(() {
+        _discoveryPercentage = finalPercentage;
+        _userTier = currentTier;
+        _isLoading = false;
+      });
+    }
+
+    // 4. (Separately) Try to sync the local value up, if it's higher
+    // This function already has the (local > cloud) check inside it, so it's safe.
+    await service.updateCloudPercentage(localPercentage, country);
+  }
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final user = FirebaseAuth.instance.currentUser;
     final selectedCountry = context.watch<SettingsProvider>().selectedCountry;
-    super.build(context);
+
+    final fakeGps = context.watch<FakeLocationProvider>();
+    final bool isPaused = fakeGps.isFaking && !fakeGps.isAdmin;
 
     if (user?.isAnonymous ?? true) {
       return const GuestDiscoveryPromptScreen();
@@ -188,10 +228,13 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  TieredProgressCircle(
-                    percentage: _discoveryPercentage!,
-                    tier: _userTier!,
-                    country: selectedCountry,
+                  _PausedOverlayWrapper(
+                    isPaused: isPaused,
+                    child: TieredProgressCircle(
+                      percentage: _discoveryPercentage!,
+                      tier: _userTier!,
+                      country: selectedCountry,
+                    ),
                   ),
                   const SizedBox(height: 24),
                   _buildRankCard(),
@@ -288,10 +331,12 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              // The map itself needs a constrained height
-              child: SizedBox(
-                height: 300, // Explicitly give the map a height
-                child: _buildAtlasMap(),
+              child: _PausedOverlayWrapper(
+                isPaused: isPaused,
+                child: SizedBox(
+                  height: 300,
+                  child: _buildAtlasMap(),
+                ),
               ),
             ),
           ),
@@ -474,38 +519,7 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
     );
   }
 
-  Future<void> _loadDiscoveryData() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
 
-    // Get the service and country from providers
-    final service = context.read<RoadDiscoveryService>();
-    final country = context.read<SettingsProvider>().selectedCountry;
-
-    // 1. Get BOTH local and cloud percentages in parallel
-    final results = await Future.wait([
-      service.calculateDiscoveryPercentage(country), // Local
-      service.getCloudDiscoveryPercentage(country)  // Cloud
-    ]);
-
-    final double localPercentage = results[0];
-    final double cloudPercentage = results[1];
-
-    // 2. Find the *highest* value to show the user
-    final double finalPercentage = max(localPercentage, cloudPercentage);
-
-    // 3. Update the UI with the highest value
-    if (mounted) {
-      setState(() {
-        _discoveryPercentage = finalPercentage;
-        _isLoading = false;
-      });
-    }
-
-    // 4. (Separately) Try to sync the local value up, if it's higher
-    // This function already has the (local > cloud) check inside it, so it's safe.
-    await service.updateCloudPercentage(localPercentage, country);
-  }
 
   Future<void> _loadMapStyles() async {
     _darkMapStyle = await rootBundle.loadString('assets/map_style_dark.json');
@@ -736,6 +750,81 @@ class GuestDiscoveryPromptScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _PausedOverlayWrapper extends StatelessWidget {
+  final Widget child;
+  final bool isPaused;
+
+  const _PausedOverlayWrapper({
+    required this.child,
+    required this.isPaused,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // If not paused, just return the original widget
+    if (!isPaused) {
+      return child;
+    }
+
+    // If paused, stack the blur and text on top of the child
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        // 1. The blurred child content
+        ImageFiltered(
+          imageFilter: ui.ImageFilter.blur(sigmaX: 4.0, sigmaY: 4.0),
+          child: child,
+        ),
+        // 2. The "Paused" overlay text
+        // We use a container to provide a slight dark overlay, making
+        // the white text more readable against any background.
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.1),
+            // This makes the overlay match the map's rounded corners
+            borderRadius: BorderRadius.circular(16.0),
+          ),
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  "Paused",
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    shadows: [
+                      Shadow(
+                        blurRadius: 4.0,
+                        color: Colors.black.withOpacity(0.5),
+                        offset: const Offset(2.0, 2.0),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  "Due to Fake GPS location ON",
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: Colors.white,
+                    shadows: [
+                      Shadow(
+                        blurRadius: 4.0,
+                        color: Colors.black.withOpacity(0.5),
+                        offset: const Offset(1.0, 1.0),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
