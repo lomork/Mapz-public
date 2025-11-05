@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:location/location.dart';
-import 'package:mapz/api/google_maps_api_service.dart';
+import 'package:mapz/models/place.dart';
 import 'package:mapz/providers/fake_location_provider.dart';
 import 'package:provider/provider.dart';
-
 
 class FakeGpsScreen extends StatefulWidget {
   const FakeGpsScreen({super.key});
@@ -15,303 +13,317 @@ class FakeGpsScreen extends StatefulWidget {
 }
 
 class _FakeGpsScreenState extends State<FakeGpsScreen> {
-  final TextEditingController _fromController = TextEditingController();
-  final TextEditingController _toController = TextEditingController();
-  final TextEditingController _durationController =
-  TextEditingController(text: '10');
-  final TextEditingController _speedController =
-  TextEditingController(text: '50');
-
-  bool _showRouteOptions = false;
   GoogleMapController? _mapController;
-  final Location _location = Location();
-  Timer? _debounce;
-  bool _isMapMoving = false;
+  final TextEditingController _toController = TextEditingController();
+  final TextEditingController _fromController = TextEditingController();
+  final FocusNode _toFocus = FocusNode();
+  final FocusNode _fromFocus = FocusNode();
 
-  LatLng? _fromLatLng;
-  LatLng? _toLatLng;
-
+  // --- NEW: State for speed slider ---
+  double _selectedSpeedKmph = 50.0;
 
   @override
   void initState() {
     super.initState();
-    _fromController.addListener(() {
-      if (mounted) {
-        setState(() {
-          _showRouteOptions = _fromController.text.isNotEmpty;
-        });
+    final provider = context.read<FakeLocationProvider>();
+
+    // Generate a new session token only if not already faking
+    if (!provider.isFaking) {
+      provider.generateSessionToken();
+    }
+
+    // Add listeners to fetch suggestions
+    _toController.addListener(() => _onSearchChanged(true));
+    _fromController.addListener(() => _onSearchChanged(false));
+
+    _toFocus.addListener(() => _onFocusChanged(true));
+    _fromFocus.addListener(() => _onFocusChanged(false));
+
+    // Pre-fill text fields from provider state
+    _toController.text = provider.toPlace?.name ?? '';
+    _fromController.text = provider.fromPlace?.name ?? '';
+  }
+
+  void _onSearchChanged(bool isToField) {
+    // Only fetch suggestions if the text field has focus
+    if (isToField) {
+      if (_toFocus.hasFocus) {
+        context
+            .read<FakeLocationProvider>()
+            .fetchSuggestions(_toController.text, isFromField: false);
       }
+    } else {
+      if (_fromFocus.hasFocus) {
+        context
+            .read<FakeLocationProvider>()
+            .fetchSuggestions(_fromController.text, isFromField: true);
+      }
+    }
+  }
+
+  void _onFocusChanged(bool isToField) {
+    final provider = context.read<FakeLocationProvider>();
+    // When focusing, generate a token if it's null (e.g., first run)
+    if (_toFocus.hasFocus || _fromFocus.hasFocus) {
+      provider.generateSessionToken();
+    }
+
+    // Clear suggestions for the *other* field when this one gains focus
+    if (isToField) {
+      if (_toFocus.hasFocus) {
+        provider.clearSuggestions(true); // Clear 'from'
+      }
+    } else {
+      if (_fromFocus.hasFocus) {
+        provider.clearSuggestions(false); // Clear 'to'
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _mapController?.dispose();
+    _toController.dispose();
+    _fromController.dispose();
+    _toFocus.dispose();
+    _fromFocus.dispose();
+
+    // --- FIX: REMOVED THE LINE THAT CAUSED THE CRASH ---
+    // DO NOT call context.read() in dispose.
+    // We will clear the token from the provider itself if needed.
+
+    super.dispose();
+  }
+
+  void _onPlaceSelected(PlaceSuggestion suggestion, bool isToField) {
+    final provider = context.read<FakeLocationProvider>();
+    provider.setPlace(suggestion: suggestion, isFromField: !isToField).then((_) {
+      // After setting, update text controllers from provider
+      _toController.text = provider.toPlace?.name ?? '';
+      _fromController.text = provider.fromPlace?.name ?? '';
+      _toFocus.unfocus();
+      _fromFocus.unfocus();
     });
   }
 
-    @override
-    void dispose() {
-      _fromController.dispose();
-      _toController.dispose();
-      _durationController.dispose();
-      _speedController.dispose();
-      _debounce?.cancel();
-      super.dispose();
-    }
+  @override
+  Widget build(BuildContext context) {
+    // Use Consumer to react to provider changes
+    return Consumer<FakeLocationProvider>(
+      builder: (context, provider, child) {
+        // Animate map to new route bounds when they change
+        if (provider.routeBounds != null && _mapController != null) {
+          // Check if map is already at bounds to prevent loop
+          _mapController!.animateCamera(
+            CameraUpdate.newLatLngBounds(
+              provider.routeBounds!,
+              50.0, // Padding
+            ),
+          );
+        }
 
-    void _centerOnUser() async {
-      try {
-        var userLocation = await _location.getLocation();
-        _mapController?.animateCamera(
-          CameraUpdate.newLatLngZoom(
-            LatLng(userLocation.latitude!, userLocation.longitude!),
-            16.0,
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Fake GPS Location'),
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () {
+                // Manually clear token when user presses back
+                provider.clearSessionToken();
+                Navigator.of(context).pop();
+              },
+            ),
+          ),
+          body: WillPopScope(
+            // Also clear token on system back button
+            onWillPop: () async {
+              provider.clearSessionToken();
+              return true;
+            },
+            child: Stack(
+              children: [
+                Column(
+                  children: [
+                    _buildLocationInputs(provider),
+                    _buildEtaDisplay(provider),
+                    Expanded(
+                      child: GoogleMap(
+                        onMapCreated: (controller) => _mapController = controller,
+                        initialCameraPosition: const CameraPosition(
+                          target: LatLng(44.6702, -63.5739), // Default
+                          zoom: 12.0,
+                        ),
+                        polylines: provider.polylines,
+                        myLocationButtonEnabled: false,
+                        myLocationEnabled: false,
+                      ),
+                    ),
+                    _buildBottomBar(provider),
+                  ],
+                ),
+                // --- Suggestions Overlay ---
+                if (provider.toSuggestions.isNotEmpty)
+                  _buildSuggestionsOverlay(provider.toSuggestions, true),
+                if (provider.fromSuggestions.isNotEmpty)
+                  _buildSuggestionsOverlay(provider.fromSuggestions, false),
+              ],
+            ),
           ),
         );
-      } catch (e) {
-        // Handle error (e.g., location permission denied)
-      }
-    }
+      },
+    );
+  }
 
-    void _onCameraIdle() async {
-      if (!_isMapMoving || _mapController == null) return; // Don't run on init
+  // --- Swapped UI (To/From) ---
+  Widget _buildLocationInputs(FakeLocationProvider provider) {
+    bool isReadOnly = provider.isFaking;
 
-      _isMapMoving = false;
-      final LatLng center = await _mapController!.getLatLng(
-        ScreenCoordinate(
-          x: MediaQuery.of(context).size.width ~/ 2,
-          y: (MediaQuery.of(context).size.height * 0.5) ~/ 2, // Center of the map view
-        ),
-      );
-
-      _toLatLng = center;
-      // Get the human-readable address
-      final apiService = context.read<GoogleMapsApiService>();
-      try {
-        final result = await apiService.reverseGeocode(center);
-        if (result['status'] == 'OK' && result['results'].isNotEmpty) {
-          _toController.text = result['results'][0]['formatted_address'];
-        }
-      } catch (e) {
-        _toController.text = 'Lat: ${center.latitude}, Lng: ${center.longitude}';
-      }
-    }
-
-    void _geocodeAddress(String address, {bool isFrom = false}) {
-      if (_debounce?.isActive ?? false) _debounce!.cancel();
-      _debounce = Timer(const Duration(milliseconds: 700), () async {
-        if (address.isEmpty) return;
-
-        final apiService = context.read<GoogleMapsApiService>();
-        try {
-          final result = await apiService.geocode(address);
-          if (result['status'] == 'OK' && result['results'].isNotEmpty) {
-            final loc = result['results'][0]['geometry']['location'];
-            final latLng = LatLng(loc['lat'], loc['lng']);
-
-            if (isFrom) {
-              _fromLatLng = latLng;
-            } else {
-              _toLatLng = latLng;
-              _mapController?.animateCamera(CameraUpdate.newLatLngZoom(latLng, 16.0));
-            }
-          }
-        } catch (e) {
-          // Handle geocoding error
-        }
-      });
-    }
-
-  void _startSimulation() async {
-    final fakeGps = context.read<FakeLocationProvider>();
-    final apiService = context.read<GoogleMapsApiService>();
-
-    // --- FIX: Capture context-dependent variables before await ---
-    final navigator = Navigator.of(context);
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-
-    // Ensure we have a "To" location (the map center)
-    _toLatLng ??= await _mapController?.getLatLng(
-      ScreenCoordinate(
-        x: MediaQuery.of(context).size.width ~/ 2,
-        y: (MediaQuery.of(context).size.height * 0.5) ~/ 2,
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.location_on, color: Colors.blue),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _toController,
+                  focusNode: _toFocus,
+                  readOnly: isReadOnly,
+                  decoration: const InputDecoration(
+                    hintText: 'To: Choose destination',
+                    border: InputBorder.none,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const Divider(),
+          Row(
+            children: [
+              const Icon(Icons.my_location, color: Colors.grey),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _fromController,
+                  focusNode: _fromFocus,
+                  readOnly: isReadOnly,
+                  decoration: const InputDecoration(
+                    hintText: 'From: Your location',
+                    border: InputBorder.none,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.swap_vert),
+                onPressed:
+                isReadOnly ? null : () {
+                  provider.swapFromAndTo();
+                  // Update controllers after swap
+                  _toController.text = provider.toPlace?.name ?? '';
+                  _fromController.text = provider.fromPlace?.name ?? '';
+                },
+              ),
+            ],
+          ),
+          const Divider(),
+        ],
       ),
     );
-
-    if (_toLatLng == null) return;
-
-    // Case 1: "To" location only. Set a static fake location.
-    if (_fromLatLng == null) {
-      // --- FIX: Removed 'await' ---
-      fakeGps.setManualFakeLocation(_toLatLng!);
-
-      // --- FIX: Use captured variable ---
-      scaffoldMessenger.showSnackBar(
-        SnackBar(content: Text('Set fake location to: ${_toController.text}')),
-      );
-      // --- FIX: Use captured variable ---
-      navigator.pop(); // Close the screen
-      return;
-    }
-
-    // Case 2: "From" and "To" locations. Simulate a route.
-    try {
-      final directions = await apiService.getDirections(
-        origin: _fromLatLng!,
-        destination: _toLatLng!,
-        travelMode: 'driving',
-      );
-
-      if (directions['status'] == 'OK') {
-        final polyline = directions['routes'][0]['overview_polyline']['points'];
-        final List<LatLng> points = _decodePolyline(polyline);
-        final double speed = double.tryParse(_speedController.text) ?? 50.0;
-
-        // --- FIX: Removed 'await' ---
-        fakeGps.startRouteSimulation(points, speed);
-
-        // --- FIX: Use captured variable ---
-        scaffoldMessenger.showSnackBar(
-          const SnackBar(content: Text('Starting fake route simulation...')),
-        );
-        // --- FIX: Use captured variable ---
-        navigator.pop();
-      }
-    } catch (e) {
-      // --- FIX: Use captured variable ---
-      scaffoldMessenger.showSnackBar(
-        SnackBar(content: Text('Failed to get route: $e')),
-      );
-    }
   }
-    void _updateNumberField(TextEditingController controller, int step) {
-      int currentValue = int.tryParse(controller.text) ?? 0;
-      currentValue += step;
-      if (currentValue < 1) currentValue = 1; // Don't allow 0 or negative
-      controller.text = currentValue.toString();
-    }
 
-    @override
-    Widget build(BuildContext context) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('Fake GPS Location'),
-        ),
-        body: Column(
-          children: [
-            // --- 1. The Mini Map ---
-            Expanded(
-              child: Stack(
+  // --- ETA Display ---
+  Widget _buildEtaDisplay(FakeLocationProvider provider) {
+    if (provider.routeEta == null || provider.isFaking) {
+      return const SizedBox.shrink(); // Hide if no ETA or if faking
+    }
+    return Container(
+      width: double.infinity,
+      color: Theme.of(context).canvasColor,
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: Text(
+        'ETA: ${provider.routeEta} (${provider.routeDistance})',
+        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  // --- State-Managed Button & NEW SLIDER ---
+  Widget _buildBottomBar(FakeLocationProvider provider) {
+    return Container(
+      padding: const EdgeInsets.all(16.0),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 8,
+              offset: const Offset(0, -2))
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // --- NEW: Speed Slider ---
+          if (!provider.isFaking) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: Row(
                 children: [
-                  GoogleMap(
-                    initialCameraPosition: const CameraPosition(
-                      target: LatLng(44.6702, -63.5739), // Default
-                      zoom: 12,
-                    ),
-                    onMapCreated: (controller) {
-                      _mapController = controller;
-                      _centerOnUser(); // Move to user's location on start
-                    },
-                    onCameraMoveStarted: () => _isMapMoving = true,
-                    onCameraIdle: _onCameraIdle,
-                    myLocationButtonEnabled: false,
-                    myLocationEnabled: true,
-                    zoomControlsEnabled: false,
-                  ),
-                  // The blue dot in the middle
-                  const Center(
-                    child: Icon(
-                      Icons.location_pin,
-                      color: Colors.blue,
-                      size: 40,
+                  const Icon(Icons.speed_outlined, color: Colors.grey),
+                  Expanded(
+                    child: Slider(
+                      value: _selectedSpeedKmph,
+                      min: 10,  // Min 10 km/h
+                      max: 200, // Max 200 km/h
+                      divisions: 19,
+                      label: '${_selectedSpeedKmph.round()} km/h',
+                      onChanged: (double value) {
+                        setState(() {
+                          _selectedSpeedKmph = value;
+                        });
+                      },
                     ),
                   ),
-                  // "Show Live Location" Button
-                  Positioned(
-                    top: 10,
-                    right: 10,
-                    child: FloatingActionButton(
-                      mini: true,
-                      onPressed: _centerOnUser,
-                      child: const Icon(Icons.my_location),
-                    ),
-                  )
+                  Text('${_selectedSpeedKmph.round()} km/h', style: const TextStyle(fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
-
-            // --- 2. The Controls Panel ---
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: _fromController,
-                      decoration: const InputDecoration(
-                        labelText: 'From',
-                        prefixIcon: Icon(Icons.trip_origin),
-                      ),
-                      onChanged: (value) => _geocodeAddress(value, isFrom: true),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _toController,
-                      decoration: const InputDecoration(
-                        labelText: 'To',
-                        prefixIcon: Icon(Icons.location_on),
-                      ),
-                      onChanged: (value) => _geocodeAddress(value, isFrom: false),
-                    ),
-
-                    AnimatedSize(
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeInOut,
-                      child: _showRouteOptions
-                          ? _buildRouteOptions()
-                          : const SizedBox(width: double.infinity),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                        ),
-                        onPressed: _startSimulation,
-                        child: const Text('Start Fake Location'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            const SizedBox(height: 10),
           ],
-        ),
-      );
-    }
+          // --- END: Speed Slider ---
 
-  // Helper widget for the Speed/Duration controls
-  Widget _buildRouteOptions() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 20.0),
-      child: Row(
-        children: [
-          // Duration
-          Expanded(
-            child: _buildControlColumn(
-              label: 'Duration (min)',
-              controller: _durationController,
-              onDecrement: () => _updateNumberField(_durationController, -1),
-              onIncrement: () => _updateNumberField(_durationController, 1),
-            ),
-          ),
-          const SizedBox(width: 16),
-          // Speed
-          Expanded(
-            child: _buildControlColumn(
-              label: 'Speed (km/h)',
-              controller: _speedController,
-              onDecrement: () => _updateNumberField(_speedController, -5),
-              onIncrement: () => _updateNumberField(_speedController, 5),
+          SizedBox(
+            width: double.infinity,
+            child: provider.isFaking
+                ? ElevatedButton(
+              onPressed: () {
+                provider.stopSimulation();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+              ),
+              child: const Text('Stop Fake Location',
+                  style: TextStyle(color: Colors.white)),
+            )
+                : ElevatedButton(
+              onPressed: (provider.fromPlace != null &&
+                  provider.toPlace != null)
+                  ? () {
+                // Use the speed from the slider
+                provider.startRouteSimulation(_selectedSpeedKmph);
+              }
+                  : null, // Disabled if no route
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+              ),
+              child: const Text('Start Fake Location'),
             ),
           ),
         ],
@@ -319,66 +331,34 @@ class _FakeGpsScreenState extends State<FakeGpsScreen> {
     );
   }
 
-  // Helper for the individual control
-  Widget _buildControlColumn({
-    required String label,
-    required TextEditingController controller,
-    required VoidCallback onDecrement,
-    required VoidCallback onIncrement,
-  }) {
-    return Column(
-      children: [
-        Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            IconButton(icon: const Icon(Icons.remove), onPressed: onDecrement),
-            Expanded(
-              child: TextField(
-                controller: controller,
-                textAlign: TextAlign.center,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.all(8),
-                ),
-              ),
-            ),
-            IconButton(icon: const Icon(Icons.add), onPressed: onIncrement),
-          ],
+  Widget _buildSuggestionsOverlay(
+      List<PlaceSuggestion> suggestions, bool isToField) {
+    // Position the overlay below the correct text field
+    final topPosition = isToField ? 120.0 : 180.0;
+    return Positioned(
+      top: topPosition,
+      left: 16,
+      right: 16,
+      child: Material(
+        elevation: 4.0,
+        borderRadius: BorderRadius.circular(8.0),
+        child: Container(
+          constraints: const BoxConstraints(maxHeight: 200),
+          child: ListView.builder(
+            padding: EdgeInsets.zero,
+            shrinkWrap: true,
+            itemCount: suggestions.length,
+            itemBuilder: (context, index) {
+              final suggestion = suggestions[index];
+              return ListTile(
+                leading: const Icon(Icons.location_on_outlined),
+                title: Text(suggestion.description),
+                onTap: () => _onPlaceSelected(suggestion, isToField),
+              );
+            },
+          ),
         ),
-      ],
+      ),
     );
-  }
-
-  List<LatLng> _decodePolyline(String encoded) {
-    List<LatLng> points = [];
-    int index = 0, len = encoded.length;
-    int lat = 0, lng = 0;
-
-    while (index < len) {
-      int b, shift = 0, result = 0;
-      do {
-        b = encoded.codeUnitAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-      lat += dlat;
-
-      shift = 0;
-      result = 0;
-      do {
-        b = encoded.codeUnitAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-      lng += dlng;
-
-      points.add(LatLng(lat / 1E5, lng / 1E5));
-    }
-    return points;
   }
 }

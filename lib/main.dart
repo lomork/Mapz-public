@@ -40,15 +40,25 @@ Future<void> main() async {
   runApp(
     MultiProvider(
       providers: [
+        Provider<Isar>(
+          create: (_) => isar,
+        ),
         Provider<GoogleMapsApiService>(
           create: (_) => GoogleMapsApiService(),
+        ),
+        ChangeNotifierProxyProvider<GoogleMapsApiService, FakeLocationProvider>(
+          create: (context) => FakeLocationProvider(
+            context.read<GoogleMapsApiService>(),
+          ),
+          update: (context, apiService, previousProvider) =>
+          previousProvider ?? FakeLocationProvider(apiService),
         ),
         ProxyProvider<FakeLocationProvider, RoadDiscoveryService>(
           update: (context, fakeLocationProvider, previous) =>
               RoadDiscoveryService(
                 context.read<Isar>(),
                 context.read<GoogleMapsApiService>(),
-                fakeLocationProvider, // This is the new dependency
+                fakeLocationProvider,
               ),
         ),
         Provider<LeaderboardService>(
@@ -62,7 +72,6 @@ Future<void> main() async {
         ChangeNotifierProvider<SettingsProvider>(
           create: (_) => SettingsProvider(),
         ),
-        ChangeNotifierProvider(create: (_) => FakeLocationProvider()),
       ],
       child: const MyApp(),
     ),
