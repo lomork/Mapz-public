@@ -4,7 +4,6 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:mapz/providers/fake_location_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:isar/isar.dart';
 import 'models/discovered_road.dart';
 import 'services/road_discovery_service.dart';
 import 'services/leaderboard_service.dart';
@@ -31,18 +30,10 @@ Future<void> main() async {
   final notificationService = NotificationService();
   await notificationService.init();
   await notificationService.requestPermissions();
-  final dir = await getApplicationDocumentsDirectory();
-  final isar = await Isar.open(
-    [DiscoveredRoadSchema], // Tell Isar about our road model
-    directory: dir.path,
-  );
 
   runApp(
     MultiProvider(
       providers: [
-        Provider<Isar>(
-          create: (_) => isar,
-        ),
         Provider<GoogleMapsApiService>(
           create: (_) => GoogleMapsApiService(),
         ),
@@ -56,7 +47,6 @@ Future<void> main() async {
         ProxyProvider<FakeLocationProvider, RoadDiscoveryService>(
           update: (context, fakeLocationProvider, previous) =>
               RoadDiscoveryService(
-                context.read<Isar>(),
                 context.read<GoogleMapsApiService>(),
                 fakeLocationProvider,
               ),

@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:isar/isar.dart';
 import 'package:http/http.dart' as http;
 import 'package:location/location.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -13,9 +12,9 @@ import '../api/google_maps_api_service.dart';
 import '../providers/fake_location_provider.dart';
 import 'notification_service.dart';
 import '../providers/fake_location_provider.dart';
+import '../services/database_service.dart';
 
 class RoadDiscoveryService {
-  final Isar isar;
   final GoogleMapsApiService _apiService;
   final FakeLocationProvider _fakeLocationProvider;
 
@@ -33,8 +32,9 @@ class RoadDiscoveryService {
   Timer? _stopTimer;
   bool _isNotificationActive = false;
   static const double _speedThreshold = 1.0;
+  final DatabaseService _dbService = DatabaseService();
 
-  RoadDiscoveryService(this.isar, this._apiService, this._fakeLocationProvider);
+  RoadDiscoveryService(this._apiService, this._fakeLocationProvider);
 
   Future<void> addDrivenPath(List<LatLng> path) async {
 
@@ -191,19 +191,18 @@ class RoadDiscoveryService {
           final String? placeId = point['placeId'];
           if (placeId != null) {
             newRoads.add(
-              DiscoveredRoad()
-                ..placeId = placeId
-                ..latitude = point['location']['latitude']
-                ..longitude = point['location']['longitude'],
+              DiscoveredRoad( // <-- Use the new constructor
+                placeId: placeId,
+                latitude: point['location']['latitude'],
+                longitude: point['location']['longitude'],
+              ),
             );
           }
         }
 
         if (newRoads.isNotEmpty) {
           // Write all new, unique road segments to the local database
-          await isar.writeTxn(() async {
-            await isar.discoveredRoads.putAll(newRoads);
-          });
+          await _dbService.insertRoads(newRoads);
           print("Saved ${newRoads.length} new road segments to local DB.");
         }
       }
@@ -229,7 +228,7 @@ class RoadDiscoveryService {
     final totalRoadsInCountry = totalRoadsByCountry[country] ?? 1000000;
 
     // This part of your code is correct and reads from your local database.
-    final discoveredRoadCount = await isar.discoveredRoads.count();
+    final discoveredRoadCount = await _dbService.getRoadsCount();
 
     if (totalRoadsInCountry == 0) return 0.0;
 
@@ -239,7 +238,7 @@ class RoadDiscoveryService {
 
   // Gets all discovered points for the "My Atlas" map
   Future<List<LatLng>> getAllDiscoveredPoints() async {
-    final roads = await isar.discoveredRoads.where().findAll();
+    final roads = await _dbService.getAllDiscoveredRoads();
     return roads.map((road) => LatLng(road.latitude, road.longitude)).toList();
   }
 
