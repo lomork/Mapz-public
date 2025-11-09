@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/discovery/leaderboard_user.dart';
 import '../models/discovery/tier.dart';
@@ -28,8 +27,11 @@ class LeaderboardService {
       return querySnapshot.docs.map((doc) {
         final data = doc.data();
         final percentage = (data['discovery']?[country] as num? ?? 0).toDouble();
+
         return LeaderboardUser(
+          uid: doc.id, // <-- PASS THE USER'S ID
           name: data['displayName'] ?? 'Anonymous',
+          photoURL: data['photoURL'] ?? '', // <-- PASS THE PHOTO URL
           percentage: percentage,
           tier: TierManager.getTier(percentage),
         );

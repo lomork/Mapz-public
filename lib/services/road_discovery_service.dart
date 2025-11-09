@@ -264,6 +264,9 @@ class RoadDiscoveryService {
   }
 
   // Updates your cloud database (e.g., Firebase) with the new percentage
+// lib/services/road_discovery_service.dart
+
+  // Updates your cloud database (e.g., Firebase) with the new percentage
   Future<void> updateCloudPercentage(double localPercentage, String country) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return; // Not logged in, can't save.
@@ -274,28 +277,49 @@ class RoadDiscoveryService {
       // --- READ FROM FIREBASE FIRST ---
       final doc = await userDocRef.get();
       double cloudPercentage = 0.0;
+      bool shouldUpdate = false;
+
+      // Base data to set/merge
+      // This ensures displayName and photoURL are always present
+      final Map<String, dynamic> baseUserData = {
+        'displayName': user.displayName,
+        'photoURL': user.photoURL,
+      };
 
       if (doc.exists && doc.data()!.containsKey('discovery')) {
         final discoveryData = doc.data()!['discovery'] as Map<String, dynamic>;
         if (discoveryData.containsKey(country)) {
           cloudPercentage = (discoveryData[country] as num).toDouble();
+        } else {
+          // Cloud doc exists, but not for this country. We should update.
+          shouldUpdate = true;
         }
+      } else {
+        // The user document or 'discovery' map doesn't exist. We must update.
+        shouldUpdate = true;
       }
 
-      // --- COMPARE AND ONLY WRITE IF HIGHER ---
-      if (localPercentage > cloudPercentage) {
-        // The local value is newer/higher, so we save it.
+      // --- COMPARE AND ONLY WRITE IF HIGHER OR IF IT'S A NEW ENTRY ---
+      if (localPercentage > cloudPercentage || shouldUpdate) {
+        // The local value is newer/higher OR this is the user's first sync
+        // for this country.
+
+        // We merge the base user data with the new discovery data
         await userDocRef.set({
-          'displayName': user.displayName,
-          'photoURL': user.photoURL,
+          ...baseUserData,
           'discovery': {
-            country: localPercentage, // Save the bigger number
+            country: localPercentage, // Save the bigger number or new number
           }
-        }, SetOptions(merge: true));
-        print("Successfully synced NEW discovery percentage for $country to Firestore.");
+        }, SetOptions(merge: true)); // SetOptions(merge: true) is crucial
+
+        print("Successfully synced discovery percentage for $country to Firestore.");
       } else {
         // The cloud value is higher. Do nothing.
         print("Cloud percentage is already higher ($cloudPercentage) than local ($localPercentage). No update needed.");
+
+        // Still, let's make sure their profile info is up-to-date
+        // This is a "merge" so it won't overwrite the discovery map
+        await userDocRef.set(baseUserData, SetOptions(merge: true));
       }
     } catch (e) {
       print("Could not update percentage on cloud: $e");
