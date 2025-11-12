@@ -13,6 +13,7 @@ import '../providers/fake_location_provider.dart';
 import 'notification_service.dart';
 import '../providers/fake_location_provider.dart';
 import '../services/database_service.dart';
+import '../models/discovery/tier.dart';
 
 class RoadDiscoveryService {
   final GoogleMapsApiService _apiService;
@@ -24,11 +25,13 @@ class RoadDiscoveryService {
   final Location _location = Location();
   final NotificationService _notificationService = NotificationService();
   StreamSubscription<LocationData>? _locationSubscription;
-
   StreamSubscription<LocationData>? _fakeLocationSubscription;
 
-  bool _isHighAccuracy = false;
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  StreamSubscription<DocumentSnapshot>? _userSettingsStream;
+  bool _isSharingEnabled = false;
 
+  bool _isHighAccuracy = false;
   Timer? _stopTimer;
   bool _isNotificationActive = false;
   static const double _speedThreshold = 1.0;
@@ -56,8 +59,6 @@ class RoadDiscoveryService {
     if (locationData.latitude == null || locationData.longitude == null) return;
 
     final newPoint = LatLng(locationData.latitude!, locationData.longitude!);
-
-
     final speed = locationData.speed ?? 0.0;
 
     if (speed > _speedThreshold) { // User is moving
@@ -82,6 +83,7 @@ class RoadDiscoveryService {
         _isNotificationActive = true;
       }
       addLocationPoint(newPoint);
+      _updateLiveLocationIfSharing(newPoint);
     } else { // User has stopped
       if (_isHighAccuracy) {
         if (_stopTimer == null || !_stopTimer!.isActive) {
@@ -107,6 +109,26 @@ class RoadDiscoveryService {
           });
         }
       }
+    }
+  }
+
+  Future<void> _updateLiveLocationIfSharing(LatLng point) async {
+    // If setting is off, do nothing.
+    if (!_isSharingEnabled) return;
+
+    try {
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId == null) return;
+
+      // Write the GeoPoint and a timestamp
+      await _db.collection('users').doc(userId).set({
+        'live_location': GeoPoint(point.latitude, point.longitude),
+        'location_last_updated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      print("Live location updated.");
+    } catch (e) {
+      print("Failed to update live location: $e");
     }
   }
 
@@ -147,6 +169,22 @@ class RoadDiscoveryService {
 
     _locationSubscription?.cancel();
     _fakeLocationSubscription?.cancel();
+    _userSettingsStream?.cancel();
+
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId != null) {
+      _userSettingsStream = _db
+          .collection('users')
+          .doc(userId)
+          .snapshots()
+          .listen((doc) {
+        _isSharingEnabled = doc.data()?['isSharingLocation'] ?? false;
+        print("Location sharing setting changed: $_isSharingEnabled");
+      }, onError: (e) {
+        print("Error listening to user settings: $e");
+        _isSharingEnabled = false;
+      });
+    }
 
     _locationSubscription = _location.onLocationChanged.listen((locationData) {
       if (!_fakeLocationProvider.isFaking) {
@@ -178,6 +216,8 @@ class RoadDiscoveryService {
     _location.enableBackgroundMode(enable: false);
     _locationSubscription?.cancel();
     _notificationService.cancelDiscoveryActiveNotification();
+    _fakeLocationSubscription?.cancel();
+    _userSettingsStream?.cancel();
     _isNotificationActive = false;
     _stopTimer?.cancel();
   }
@@ -303,13 +343,16 @@ class RoadDiscoveryService {
       if (localPercentage > cloudPercentage || shouldUpdate) {
         // The local value is newer/higher OR this is the user's first sync
         // for this country.
+        final newTier = TierManager.getTier(localPercentage);
+        final tierString = newTier.name;
 
         // We merge the base user data with the new discovery data
         await userDocRef.set({
           ...baseUserData,
           'discovery': {
             country: localPercentage, // Save the bigger number or new number
-          }
+          },
+          'tier': tierString,
         }, SetOptions(merge: true)); // SetOptions(merge: true) is crucial
 
         print("Successfully synced discovery percentage for $country to Firestore.");

@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:mapz/screens/auth/auth_gate.dart';
+import 'package:mapz/models/Discovery/tier.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -136,6 +137,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
       // Update the user's profile display name
       await userCredential.user?.updateDisplayName(username);
 
+      final defaultTier = TierManager.getTier(0.0);
+      final defaultTierString = defaultTier.name;
+
       // Save user data to Firestore
       await FirebaseFirestore.instance
           .collection('users')
@@ -146,6 +150,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
         'displayName': username,
         'username_lowercase': username.toLowerCase(),
         'photoURL': null,
+        'tier': defaultTierString,
+        'discovery': {},
       });
 
       // --- FIX: Added 'if (mounted)' check ---

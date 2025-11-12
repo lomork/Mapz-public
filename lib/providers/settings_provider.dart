@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/discovery/leaderboard_user.dart';
+import '../models/discovery/tier.dart';
 
 class LeaderboardData {
   final List<LeaderboardUser> users;
@@ -75,7 +76,18 @@ class SettingsProvider with ChangeNotifier {
           .limit(50)
           .get();
 
-      final users = snapshot.docs.map((doc) => LeaderboardUser.fromFirestore(doc)).toList();
+      final users = snapshot.docs.map((doc) {
+        final data = doc.data() as Map<String, dynamic>?;
+        final percentage = (data?['percentage'] as num? ?? 0).toDouble();
+
+        return LeaderboardUser(
+          uid: doc.id, // Assuming the doc ID is the user's UID
+          name: data?['displayName'] ?? 'Anonymous',
+          photoURL: data?['photoURL'] ?? '',
+          percentage: percentage,
+          tier: TierManager.getTier(percentage), // Calculate the tier
+        );
+      }).toList();
       return LeaderboardData(users: users);
     } catch (e) {
       print("Error fetching from Firestore: $e");

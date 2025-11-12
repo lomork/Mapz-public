@@ -55,6 +55,10 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
+  GoogleMapController? _sharingMapController;
+  final Set<Marker> _friendMarkers = {};
+  final List<StreamSubscription> _friendLocationStreams = [];
+
   @override
   bool get wantKeepAlive => true;
 
@@ -91,51 +95,73 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
   void dispose() {
     _tabController.dispose();
     _locationSubscription?.cancel();
+    _atlasMapController?.dispose();
+    _sharingMapController?.dispose();
+    for (var stream in _friendLocationStreams) {
+      stream.cancel();
+    }
+    _friendLocationStreams.clear();
     super.dispose();
   }
 
-  Future<void> _loadAllData() async {
+  // REPLACE your old _loadDiscoveryData function with this one
+
+  Future<void> _loadDiscoveryData() async {
     if (!mounted) return;
     setState(() => _isLoading = true);
 
+    // Get services and country from providers
     final discoveryService = context.read<RoadDiscoveryService>();
-    final leaderboardService = context.read<LeaderboardService>();
-    final currentUser = FirebaseAuth.instance.currentUser;
+    final leaderboardService = context.read<LeaderboardService>(); // <-- Get this service
+    final country = context.read<SettingsProvider>().selectedCountry;
+    final currentUser = FirebaseAuth.instance.currentUser; // <-- Get the user
 
-    if (currentUser == null || _currentCountry == null) {
+    if (currentUser == null) { // <-- Check for user
       setState(() => _isLoading = false);
       return;
     }
 
+    // 1. Get percentages, leaderboards, and atlas points in parallel
     final results = await Future.wait([
-      discoveryService.calculateDiscoveryPercentage(_currentCountry!),
-      leaderboardService.getNationalLeaderboard(_currentCountry!),
-      discoveryService.getAllDiscoveredPoints(),
+      discoveryService.calculateDiscoveryPercentage(country), // Local
+      discoveryService.getCloudDiscoveryPercentage(country),  // Cloud
+      leaderboardService.getNationalLeaderboard(country), // <-- Load national
+      discoveryService.getAllDiscoveredPoints(), // <-- Load atlas
+      leaderboardService.getLocationSharers(), // <-- Load friends
     ]);
 
-    final percentage = results[0] as double;
-    final rankings = results[1] as List<LeaderboardUser>;
-    final atlasPoints = results[2] as List<LatLng>;
-    final userTier = TierManager.getTier(percentage);
+    // 2. Process results
+    final double localPercentage = results[0] as double;
+    final double cloudPercentage = results[1] as double;
+    final List<LeaderboardUser> rankings = results[2] as List<LeaderboardUser>;
+    final List<LatLng> atlasPoints = results[3] as List<LatLng>;
+    _sharingRankings = results[4] as List<LeaderboardUser>;
 
-    bool isUserInList = rankings.any(
-      (user) => user.name == (currentUser.displayName ?? 'You'),
-    );
+    // 3. Find the *highest* value to show the user
+    final double finalPercentage = max(localPercentage, cloudPercentage);
+    final Tier currentTier = TierManager.getTier(finalPercentage);
+
+    // 4. Fix the error from your screenshot (add user to list if not present)
+    bool isUserInList = rankings.any((user) => user.uid == currentUser.uid);
     if (!isUserInList) {
       rankings.insert(
         0,
         LeaderboardUser(
+          uid: currentUser.uid,
           name: currentUser.displayName ?? 'You',
-          percentage: percentage,
-          tier: userTier,
+          photoURL: currentUser.photoURL ?? '',
+          percentage: finalPercentage,
+          tier: currentTier,
         ),
       );
-      // In a real app, you might want to sort the list again here.
+      // You might want to re-sort or limit to 100 here
     }
 
-    final rivals = await leaderboardService.getRivals(userTier);
+    // 5. Get Rivals and Sharers (now that we have the tier)
+    final rivals = await leaderboardService.getRivals(currentTier);
     final sharers = await leaderboardService.getLocationSharers();
 
+    // 6. Update Heatmap
     if (atlasPoints.isNotEmpty) {
       final heatmap = Heatmap(
         heatmapId: const HeatmapId('discovery_heatmap'),
@@ -147,54 +173,119 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
       _heatmaps.add(heatmap);
     }
 
-    setState(() {
-      _discoveryPercentage = percentage;
-      _userTier = userTier;
-      _nationalRankings = rankings;
-      _rivalsRankings = rivals;
-      _sharingRankings = sharers;
-      _isLoading = false;
-    });
-
-    if (_currentCountry != null) {
-      await discoveryService.updateCloudPercentage(percentage, _currentCountry!);
-    }
-  }
-
-  Future<void> _loadDiscoveryData() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
-
-    // Get the service and country from providers
-    final service = context.read<RoadDiscoveryService>();
-    final country = context.read<SettingsProvider>().selectedCountry;
-
-    // 1. Get BOTH local and cloud percentages in parallel
-    final results = await Future.wait([
-      service.calculateDiscoveryPercentage(country), // Local
-      service.getCloudDiscoveryPercentage(country)  // Cloud
-    ]);
-
-    final double localPercentage = results[0];
-    final double cloudPercentage = results[1];
-
-    // 2. Find the *highest* value to show the user
-    final double finalPercentage = max(localPercentage, cloudPercentage);
-
-    final Tier currentTier = TierManager.getTier(finalPercentage);
-
-    // 3. Update the UI with the highest value
+    // 7. Update the UI
     if (mounted) {
       setState(() {
         _discoveryPercentage = finalPercentage;
         _userTier = currentTier;
+        _nationalRankings = rankings; // <-- Set the list
+        _rivalsRankings = rivals;   // <-- Set the list
+        _sharingRankings = sharers; // <-- Set the list
         _isLoading = false;
       });
     }
+    _listenToFriendLocations();
 
-    // 4. (Separately) Try to sync the local value up, if it's higher
-    // This function already has the (local > cloud) check inside it, so it's safe.
-    await service.updateCloudPercentage(localPercentage, country);
+    // 8. (Separately) Try to sync the local value up
+    await discoveryService.updateCloudPercentage(localPercentage, country);
+  }
+
+  void _listenToFriendLocations() {
+    // Clear out any old listeners
+    for (var stream in _friendLocationStreams) {
+      stream.cancel();
+    }
+    _friendLocationStreams.clear();
+    _friendMarkers.clear();
+
+    // Get the photo for the current user to add to the map
+    final currentUser = _auth.currentUser;
+    String myPhotoUrl = currentUser?.photoURL ?? '';
+
+    // Loop through each friend and create a listener
+    for (final friend in _sharingRankings) {
+      final stream = _db
+          .collection('users')
+          .doc(friend.uid)
+          .snapshots()
+          .listen((doc) {
+        _updateFriendMarker(doc, myPhotoUrl);
+      });
+      _friendLocationStreams.add(stream);
+    }
+
+    // Also listen to *my own* location to show on the friend map
+    if (currentUser != null) {
+      final myStream = _db
+          .collection('users')
+          .doc(currentUser.uid)
+          .snapshots()
+          .listen((doc) {
+        _updateFriendMarker(doc, myPhotoUrl, isCurrentUser: true);
+      });
+      _friendLocationStreams.add(myStream);
+    }
+  }
+
+  // --- NEW: Callback for when a friend's location changes ---
+  Future<void> _updateFriendMarker(DocumentSnapshot doc, String myPhotoUrl, {bool isCurrentUser = false}) async {
+    if (!doc.exists || doc.data() == null) return;
+
+    final data = doc.data() as Map<String, dynamic>;
+    final geoPoint = data['live_location'] as GeoPoint?;
+    final lastUpdated = data['location_last_updated'] as Timestamp?;
+
+    // If no location or location is old, remove marker and return
+    if (geoPoint == null || lastUpdated == null || DateTime.now().difference(lastUpdated.toDate()).inMinutes > 30) {
+      if (mounted) {
+        setState(() {
+          _friendMarkers.removeWhere((m) => m.markerId.value == doc.id);
+        });
+      }
+      return;
+    }
+
+    final latLng = LatLng(geoPoint.latitude, geoPoint.longitude);
+    final String name = data['displayName'] ?? 'Friend';
+    final String photoUrl = isCurrentUser ? myPhotoUrl : (data['photoURL'] ?? '');
+
+    // Create a custom marker with their profile picture
+    final BitmapDescriptor icon = await _createCustomMarkerBitmap(
+      photoUrl,
+      name,
+      isCurrentUser: isCurrentUser,
+    );
+
+    final marker = Marker(
+      markerId: MarkerId(doc.id),
+      position: latLng,
+      icon: icon,
+      anchor: const Offset(0.5, 0.5), // Center the icon
+      infoWindow: InfoWindow(
+        title: name,
+        snippet: 'Last seen: ${lastUpdated.toDate().toLocal()}',
+      ),
+    );
+
+    if (mounted) {
+      setState(() {
+        _friendMarkers.removeWhere((m) => m.markerId.value == doc.id); // Remove old
+        _friendMarkers.add(marker); // Add new
+      });
+    }
+  }
+
+  // --- NEW: Helper to create a custom marker from a URL ---
+  Future<BitmapDescriptor> _createCustomMarkerBitmap(String? imageUrl, String name, {bool isCurrentUser = false}) async {
+    // ... (This is a complex canvas operation, simplified for now)
+    // In a real app, you'd load the image, draw it on a canvas, and add a border
+    // For now, let's use a colored pin
+
+    final double hue = isCurrentUser ? BitmapDescriptor.hueAzure : BitmapDescriptor.hueGreen;
+
+    return BitmapDescriptor.defaultMarkerWithHue(hue);
+
+    // TODO: Implement a real custom marker painter if you want profile pics
   }
 
   @override
@@ -209,7 +300,7 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
     if (user?.isAnonymous ?? true) {
       return const GuestDiscoveryPromptScreen();
     }
-    if (_isLoading) {
+    if (_isLoading || _discoveryPercentage == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
@@ -256,63 +347,9 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
             ),
             pinned: true,
           ),
-          // This SliverToBoxAdapter will now be flexible
-          SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                // Determine which list to show based on the active tab
-                final List<LeaderboardUser> currentList;
-                switch (_tabController.index) {
-                  case 1:
-                    currentList = _rivalsRankings;
-                    break;
-                  case 2:
-                    currentList = _sharingRankings;
-                    break;
-                  default:
-                    currentList = _nationalRankings;
-                }
-                if (currentList.isEmpty) {
-                  switch (_tabController.index) {
-                    case 1:
-                      return _buildEmptyState("No Rivals Found", "Users in your tier will appear here once they join.", Icons.people_outline);
-                    case 2:
-                      return _buildEmptyState("Nobody is Sharing", "Friends who share their location will appear here.", Icons.location_off_outlined);
-                    default:
-                      return _buildEmptyState("Be the First!", "You're the first to explore this country. Your name will appear here.", Icons.flag_outlined);
-                  }                }
-                final user = currentList[index];
-                return ListTile(
-                  leading: Text(
-                    "${index + 1}",
-                    style: const TextStyle(fontSize: 16, color: Colors.grey),
-                  ),
-                  title: Text(
-                    user.name,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  trailing: Text(
-                    "${user.percentage.toStringAsFixed(4)}%",
-                    style: TextStyle(
-                      color: TierManager.getColor(user.tier),
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                );
-              },
-              // Determine the number of items in the current list
-              childCount: () {
-                switch (_tabController.index) {
-                  case 1:
-                    return _rivalsRankings.isEmpty ? 1 : _rivalsRankings.length;
-                  case 2:
-                    return _sharingRankings.isEmpty ? 1 : _sharingRankings.length;
-                  default:
-                    return _nationalRankings.isEmpty ? 1 : _nationalRankings.length;
-                }
-              }(),
-            ),
-          ),
+
+          _buildCurrentTab(isPaused),
+
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(16.0),
@@ -342,6 +379,98 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildCurrentTab(bool isPaused) {
+    switch (_tabController.index) {
+      case 0: // NATIONAL
+        return _buildSliverList(_nationalRankings, "Be the First!", "You're the first to explore this country. Your name will appear here.", Icons.flag_outlined);
+      case 1: // RIVALS
+        return _buildSliverList(_rivalsRankings, "No Rivals Found", "Users in your tier will appear here once they join.", Icons.people_outline);
+      case 2: // SHARING
+      // If paused, show the overlay
+        if (isPaused) {
+          return SliverToBoxAdapter(
+            child: _PausedOverlayWrapper(
+              isPaused: true,
+              child: Container(height: 400), // Placeholder height
+            ),
+          );
+        }
+        // If no friends, show empty state
+        if (_sharingRankings.isEmpty) {
+          return SliverToBoxAdapter(
+            child: _buildEmptyState("Add Friends to Share", "Go to your profile to add friends. Their location will appear here if they are sharing.", Icons.person_add_alt_1),
+          );
+        }
+        // Otherwise, show the map
+        return SliverToBoxAdapter(
+          child: SizedBox(
+            height: 400, // Define a height for the map
+            child: _buildSharingMap(),
+          ),
+        );
+      default:
+        return _buildSliverList([], "Error", "Something went wrong", Icons.error);
+    }
+  }
+
+  // --- NEW: Extracted the SliverList builder ---
+  Widget _buildSliverList(List<LeaderboardUser> list, String emptyTitle, String emptyMessage, IconData emptyIcon) {
+    if (list.isEmpty) {
+      return SliverToBoxAdapter(
+        child: _buildEmptyState(emptyTitle, emptyMessage, emptyIcon),
+      );
+    }
+    return SliverList(
+      delegate: SliverChildBuilderDelegate(
+            (context, index) {
+          final user = list[index];
+          return ListTile(
+            leading: Text(
+              "${index + 1}",
+              style: const TextStyle(fontSize: 16, color: Colors.grey),
+            ),
+            title: Text(
+              user.name,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            trailing: Text(
+              "${user.percentage.toStringAsFixed(4)}%",
+              style: TextStyle(
+                color: TierManager.getColor(user.tier),
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          );
+        },
+        childCount: list.length,
+      ),
+    );
+  }
+
+  // --- NEW: The map for the "SHARING" tab ---
+  Widget _buildSharingMap() {
+    return GoogleMap(
+      onMapCreated: (controller) {
+        _sharingMapController = controller;
+        final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+        _sharingMapController?.setMapStyle(
+          isDarkMode ? _darkMapStyle : _lightMapStyle,
+        );
+      },
+      initialCameraPosition: CameraPosition(
+        target: _currentUserLocation ?? const LatLng(44.6488, -63.5752), // Center on user or default
+        zoom: 12,
+      ),
+      markers: _friendMarkers,
+      myLocationEnabled: false,
+      myLocationButtonEnabled: false,
+      zoomControlsEnabled: false,
+      gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+        Factory<EagerGestureRecognizer>(() => EagerGestureRecognizer()),
+      },
     );
   }
 

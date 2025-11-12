@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:country_picker/country_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -13,6 +15,7 @@ import '../../services/leaderboard_service.dart';
 import '../../services/road_discovery_service.dart';
 import '../auth/auth_gate.dart';
 import '../../providers/settings_provider.dart';
+import '../profile/friends/friends_screen.dart';
 
 import 'accessibility_screen.dart';
 
@@ -58,9 +61,36 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
   @override
   bool get wantKeepAlive => true;
 
+  bool _isSharingLocation = false;
+  bool _isLoadingSharingToggle = true;
+  StreamSubscription? _userSharingSubscription;
+
   @override
   void initState() {
     super.initState();
+    _subscribeToSharingSetting();
+  }
+
+  void _subscribeToSharingSetting() {
+    _userSharingSubscription = FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.user.uid)
+        .snapshots()
+        .listen((doc) {
+      if (mounted) {
+        setState(() {
+          _isSharingLocation = doc.data()?['isSharingLocation'] ?? false;
+          _isLoadingSharingToggle = false;
+        });
+      }
+    }, onError: (e) {
+      if (mounted) {
+        setState(() {
+          _isSharingLocation = false;
+          _isLoadingSharingToggle = false;
+        });
+      }
+    });
   }
 
   @override
@@ -79,7 +109,22 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
   @override
   void dispose() {
     _feedbackController.dispose();
+    _userSharingSubscription?.cancel();
     super.dispose();
+  }
+
+  Future<void> _updateSharingPreference(bool isSharing) async {
+    setState(() => _isSharingLocation = isSharing);
+    try {
+      final service = context.read<LeaderboardService>();
+      await service.updateSharingPreference(isSharing);
+    } catch (e) {
+      // Revert on error
+      setState(() => _isSharingLocation = !isSharing);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update setting: $e')),
+      );
+    }
   }
 
   Future<void> _loadProfileData() async {
@@ -233,6 +278,7 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
     final name = widget.user.displayName ?? "Explorer";
     final profileImageUrl = widget.user.photoURL;
     final settingsProvider = context.watch<SettingsProvider>();
+    final user = widget.user;
 
     return Scaffold(
       appBar: AppBar(
@@ -361,6 +407,32 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
                       ],
                     ),
                   ),
+                ),
+                const SizedBox(height: 24),
+                Card(
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                    leading: const Icon(Icons.people_outline),
+                    title: const Text("Manage Friends"),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => const FriendsScreen(),
+                      ));
+                    },
+                  ),
+                ),
+                const Divider(height: 1, indent: 16, endIndent: 16),
+                _isLoadingSharingToggle
+                    ? const Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+                    : SwitchListTile(
+                  title: const Text("Share My Location"),
+                  subtitle: const Text("Visible to friends only"),
+                  value: _isSharingLocation,
+                  onChanged: _updateSharingPreference,
                 ),
                 const SizedBox(height: 24),
                 Card(
