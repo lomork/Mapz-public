@@ -6,6 +6,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
+
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
 
@@ -30,6 +34,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _isCheckingUsername = false;
   late String _originalUsername;
 
+  bool _isCompressing = false;
+
   @override
   void initState() {
     super.initState();
@@ -47,12 +53,48 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     super.dispose();
   }
 
+  Future<File?> _compressImage(File file) async {
+    final dir = await getTemporaryDirectory();
+    // Create a new path with a 'jpg' extension, regardless of original
+    final targetPath = p.join(dir.path, '${DateTime.now().millisecondsSinceEpoch}.jpg');
+
+    final result = await FlutterImageCompress.compressAndGetFile(
+      file.absolute.path,
+      targetPath,
+      quality: 80, // Compress to 80% quality
+      minWidth: 1080, // Resize to max 1080px wide
+      minHeight: 1080, // Resize to max 1080px high
+      format: CompressFormat.jpeg,
+    );
+
+    if (result == null) return null;
+
+    return File(result.path);
+  }
+
   Future<void> _pickImage() async {
     final pickedFile = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (pickedFile != null) {
       setState(() {
+        _isCompressing = true;
         _imageFile = File(pickedFile.path);
       });
+      try {
+        final File? compressedFile = await _compressImage(File(pickedFile.path));
+
+        if (compressedFile != null) {
+          setState(() {
+            _imageFile = compressedFile;
+          });
+        }
+      } catch (e) {
+        // Handle compression error
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Failed to process image: $e")));
+      } finally {
+        setState(() {
+          _isCompressing = false; // Stop compression loading
+        });
+      }
     }
   }
 
@@ -106,7 +148,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   Future<String?> _uploadProfilePicture(File image, String userId) async {
     try {
-      final storageRef = FirebaseStorage.instance.ref().child('profile_pictures/$userId.jpg');
+      final storageRef = FirebaseStorage.instance.ref().child('profile_pictures/$userId/profile.jpg');
+
       final uploadTask = storageRef.putFile(image);
       final snapshot = await uploadTask.whenComplete(() {});
       return await snapshot.ref.getDownloadURL();
@@ -139,6 +182,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please wait, checking username...')),
         );
+        setState(() => _isLoading = false);
         return;
       }
 
@@ -148,6 +192,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // 1. Upload new image if one was selected
       if (_imageFile != null) {
         newPhotoUrl = await _uploadProfilePicture(_imageFile!, _user!.uid);
+
+        if (newPhotoUrl == null) {
+          setState(() => _isLoading = false);
+          return;
+        }
       }
 
       // 2. Update Firebase Auth profile
@@ -174,17 +223,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           'username_lowercase': newUsername.toLowerCase(), // <-- SAVE THE LOWERCASE FIELD
         });
 
-        if (_imageFile != null) {
-          final ref = FirebaseStorage.instance
-              .ref()
-              .child('user_profiles')
-              .child('${user.uid}.jpg');
-
-          await ref.putFile(_imageFile!);
-          final url = await ref.getDownloadURL();
-
-          await user.updatePhotoURL(url);
-          await _firestore.collection('users').doc(user.uid).update({'photoURL': url});
+        if (newPhotoUrl != _networkImageUrl) {
+          await user.updatePhotoURL(newPhotoUrl);
+          await _firestore.collection('users').doc(user.uid).update({'photoURL': newPhotoUrl});
         }
 
         if(mounted) {
@@ -221,6 +262,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           children: [
             Center(
               child: Stack(
+                alignment: Alignment.center,
                 children: [
                   CircleAvatar(
                     radius: 60,
@@ -240,6 +282,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ),
                     ),
                   ),
+                  if (_isCompressing)
+                    const CircularProgressIndicator(),
                 ],
               ),
             ),

@@ -279,6 +279,7 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
     final profileImageUrl = widget.user.photoURL;
     final settingsProvider = context.watch<SettingsProvider>();
     final user = widget.user;
+    final discoveryService = context.watch<RoadDiscoveryService>();
 
     return Scaffold(
       appBar: AppBar(
