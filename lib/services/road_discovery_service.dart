@@ -39,9 +39,21 @@ class RoadDiscoveryService {
 
   RoadDiscoveryService(this._apiService, this._fakeLocationProvider);
 
-  Future<void> addDrivenPath(List<LatLng> path) async {
+  Map<String, int> get _totalRoadsData => {
+    'Canada': 950000,
+    'United States': 6500000,
+    'United Kingdom': 400000,
+    'Germany': 644000,
+    'France': 1000000,
+    'Australia': 873000,
+    // Added a few more for robustness
+    'Italy': 487700,
+    'Spain': 666000,
+    'Japan': 1200000,
+    'India': 6000000,
+  };
 
-  }
+  Future<void> addDrivenPath(List<LatLng> path) async {}
 
   Future<void> addLocationPoint(LatLng point) async {
     _pathBuffer.add(point);
@@ -224,55 +236,66 @@ class RoadDiscoveryService {
 
   Future<void> _snapAndStorePath(List<LatLng> path) async {
     try {
+      // 1. Snap the raw GPS points to the road network
       final result = await _apiService.snapToRoads(path);
+
       if (result.containsKey('snappedPoints')) {
+        // 2. Determine the Country for this batch
+        // We use the first point in the batch to check the country.
+        // This avoids paying for a reverse geocode on every single point.
+        String batchCountry = 'Unknown';
+        if (path.isNotEmpty) {
+          try {
+            final geocodeResult = await _apiService.reverseGeocode(path.first);
+            if (geocodeResult['status'] == 'OK' && geocodeResult['results'].isNotEmpty) {
+              final List components = geocodeResult['results'][0]['address_components'];
+              // Find the component with type 'country'
+              final countryComponent = components.firstWhere(
+                      (c) => (c['types'] as List).contains('country'),
+                  orElse: () => null
+              );
+              if (countryComponent != null) {
+                batchCountry = countryComponent['long_name']; // e.g., "Canada"
+              }
+            }
+          } catch (geoError) {
+            print("Error determining country for batch: $geoError");
+          }
+        }
+
         final List<DiscoveredRoad> newRoads = [];
         for (var point in result['snappedPoints']) {
           final String? placeId = point['placeId'];
           if (placeId != null) {
             newRoads.add(
-              DiscoveredRoad( // <-- Use the new constructor
+              DiscoveredRoad(
                 placeId: placeId,
                 latitude: point['location']['latitude'],
                 longitude: point['location']['longitude'],
+                country: batchCountry, // <--- Save the detected country
               ),
             );
           }
         }
 
         if (newRoads.isNotEmpty) {
-          // Write all new, unique road segments to the local database
           await _dbService.insertRoads(newRoads);
-          print("Saved ${newRoads.length} new road segments to local DB.");
+          print("Saved ${newRoads.length} new road segments for $batchCountry.");
         }
       }
     } catch (e) {
       print("Error in _snapAndStorePath: $e");
     }
   }
-
   // Calculates the discovery percentage
   Future<double> calculateDiscoveryPercentage(String country) async {
-    // --- FIX: Instead of an API call, we use a map of estimated values ---
-    // These are example numbers. You can adjust them or add more countries.
-    const Map<String, int> totalRoadsByCountry = {
-      'Canada': 950000,
-      'United States': 6500000,
-      'United Kingdom': 400000,
-      'Germany': 644000,
-      'France': 1000000,
-      'Australia': 873000,
-    };
 
-    // Look up the total for the selected country, with a fallback default.
-    final totalRoadsInCountry = totalRoadsByCountry[country] ?? 1000000;
+    final totalRoadsInCountry = _totalRoadsData[country] ?? 1000000;
 
-    // This part of your code is correct and reads from your local database.
-    final discoveredRoadCount = await _dbService.getRoadsCount();
+    final discoveredRoadCount = await _dbService.getRoadsCount(country: country);
 
     if (totalRoadsInCountry == 0) return 0.0;
 
-    // Calculate the percentage based on the estimated total.
     return (discoveredRoadCount / totalRoadsInCountry) * 100;
   }
 

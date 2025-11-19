@@ -4,12 +4,14 @@ class DiscoveredRoad {
   final String placeId;
   final double latitude;
   final double longitude;
+  final String country;
 
   DiscoveredRoad({
     this.id,
     required this.placeId,
     required this.latitude,
     required this.longitude,
+    required this.country,
   });
 
   // Convert a DiscoveredRoad into a Map.
@@ -20,6 +22,7 @@ class DiscoveredRoad {
       'placeId': placeId,
       'latitude': latitude,
       'longitude': longitude,
+      'country': country,
     };
   }
 
@@ -30,6 +33,7 @@ class DiscoveredRoad {
       placeId: map['placeId'],
       latitude: map['latitude'],
       longitude: map['longitude'],
+      country: map['country'] ?? 'Unknown',
     );
   }
 

@@ -24,8 +24,9 @@ class DatabaseService {
     String path = join(documentsDirectory.path, 'mapz.db');
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
@@ -39,6 +40,13 @@ class DatabaseService {
         longitude REAL NOT NULL
       )
     ''');
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // Add the new column to the existing table
+      await db.execute("ALTER TABLE discovered_roads ADD COLUMN country TEXT DEFAULT 'Unknown'");
+    }
   }
 
   // --- CRUD Operations ---
@@ -71,9 +79,20 @@ class DatabaseService {
   }
 
   // Count (for calculateDiscoveryPercentage)
-  Future<int> getRoadsCount() async {
+  Future<int> getRoadsCount({String? country}) async {
     Database db = await database;
-    final result = await db.rawQuery('SELECT COUNT(*) FROM discovered_roads');
-    return Sqflite.firstIntValue(result) ?? 0;
+
+    if (country != null) {
+      // Return count ONLY for the specific country
+      final result = await db.rawQuery(
+          'SELECT COUNT(*) FROM discovered_roads WHERE country = ?',
+          [country]
+      );
+      return Sqflite.firstIntValue(result) ?? 0;
+    } else {
+      // Fallback to total count (or global stats)
+      final result = await db.rawQuery('SELECT COUNT(*) FROM discovered_roads');
+      return Sqflite.firstIntValue(result) ?? 0;
+    }
   }
 }

@@ -54,6 +54,7 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
   //bool _isDiscoveryOn = true;
   final _feedbackController = TextEditingController();
   String? _currentCountry;
+  String? _errorMessage;
 
   bool _isSyncing = false;
 
@@ -131,60 +132,80 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
   Future<void> _loadProfileData() async {
 
     if (!mounted) return;
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
 
     if (_currentCountry == null) {
       _currentCountry = context.read<SettingsProvider>().selectedCountry;
     }
-    final discoveryService = context.read<RoadDiscoveryService>();
-    final leaderboardService = context.read<LeaderboardService>();
 
-    final userDocFuture = FirebaseFirestore.instance
-        .collection('users')
-        .doc(widget.user.uid)
-        .get();
+    try {
+      final discoveryService = context.read<RoadDiscoveryService>();
+      final leaderboardService = context.read<LeaderboardService>();
 
-    final localPercentageFuture = discoveryService.calculateDiscoveryPercentage(_currentCountry!);
-    final cloudPercentageFuture = discoveryService.getCloudDiscoveryPercentage(_currentCountry!);
-    final rankingsFuture =
-    leaderboardService.getNationalLeaderboard(_currentCountry!);
+      final userDocFuture = FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.user.uid)
+          .get();
 
-    final results = await Future.wait([
-      localPercentageFuture,
-      cloudPercentageFuture,
-      rankingsFuture,
-      userDocFuture,
-    ]);
+      final localPercentageFuture = discoveryService
+          .calculateDiscoveryPercentage(_currentCountry!);
+      final cloudPercentageFuture = discoveryService
+          .getCloudDiscoveryPercentage(_currentCountry!);
+      final rankingsFuture =
+      leaderboardService.getNationalLeaderboard(_currentCountry!);
 
-    final localPercentage = results[0] as double;
-    final cloudPercentage = results[1] as double;
-    final rankings = results[1] as List<LeaderboardUser>;
-    final userDoc = results[2] as DocumentSnapshot<Map<String, dynamic>>;
+      final results = await Future.wait([
+        localPercentageFuture,
+        cloudPercentageFuture,
+        rankingsFuture,
+        userDocFuture,
+      ]);
 
-    final percentage = max(localPercentage, cloudPercentage);
+      final localPercentage = results[0] as double;
+      final cloudPercentage = results[1] as double;
+      final rankings = results[1] as List<LeaderboardUser>;
+      final userDoc = results[2] as DocumentSnapshot<Map<String, dynamic>>;
 
-    int? rank;
-    final userIndex = rankings.indexWhere((u) => u.name == widget.user.displayName);
-    if (userIndex != -1) {
-      rank = userIndex + 1;
-    }
+      final percentage = max(localPercentage, cloudPercentage);
 
-    bool offerFlag = false;
-    if (userDoc.exists && userDoc.data() != null) {
-      final data = userDoc.data()!;
-      if (data.containsKey('has_special_offer') &&
-          data['has_special_offer'] == true) {
-        offerFlag = true;
+      int? rank;
+      final userIndex = rankings.indexWhere((u) =>
+      u.name == widget.user.displayName);
+      if (userIndex != -1) {
+        rank = userIndex + 1;
       }
-    }
 
-    if (mounted) {
-      setState(() {
-        _discoveryPercent = percentage;
-        _nationalRank = rank;
-        _hasSpecialOffer = offerFlag;
-        _isLoading = false;
-      });
+      bool offerFlag = false;
+      if (userDoc.exists && userDoc.data() != null) {
+        final data = userDoc.data()!;
+        if (data.containsKey('has_special_offer') &&
+            data['has_special_offer'] == true) {
+          offerFlag = true;
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _discoveryPercent = percentage;
+          _nationalRank = rank;
+          _hasSpecialOffer = offerFlag;
+        });
+      }
+    }catch (e, stackTrace) {
+      print("Error loading profile data: $e");
+      print(stackTrace);
+      if (mounted) {
+        setState(() {
+          _errorMessage = "Failed to load profile data. Please check your connection.";
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -285,6 +306,32 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
     final settingsProvider = context.watch<SettingsProvider>();
     final user = widget.user;
     final discoveryService = context.watch<RoadDiscoveryService>();
+
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_errorMessage != null) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 48, color: Colors.red),
+              const SizedBox(height: 16),
+              Text(_errorMessage!),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                  onPressed: _loadProfileData,
+                  child: const Text("Retry")
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(
