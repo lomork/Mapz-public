@@ -46,6 +46,8 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>LSApplicationQueriesSchemes</key>
+	<key>io.flutter.embedded_views_preview</key>
+    <true/>
     <array>
       <string>mailto</string>
     </array>

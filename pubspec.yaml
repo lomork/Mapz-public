@@ -60,6 +60,8 @@ dependencies:
   sqflite: ^2.4.2
   path_provider: ^2.1.5
   flutter_image_compress: ^2.0.4
+  model_viewer_plus: ^1.8.0
+  web: ^0.5.0
 
 dev_dependencies:
   flutter_test:
@@ -90,20 +92,11 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+    - assets/models/
     - assets/map_style_dark.json
     - assets/map_style_light.json
     - assets/animations/Login_Screen_Transition_Animation.mp4
     - .env
-    - assets/images/UserLocation.png
-    - assets/images/my_car.svg
-    - assets/images/Tree1.svg
-    - assets/images/Tree2.svg
-    - assets/images/Tree3.svg
-    - assets/images/car_pickuptruck_red.png
-    - assets/images/car_suv_green.png
-    - assets/images/car_taxi_yellow.png
-    - assets/images/motorcycle_red.png
-    - assets/images/car_sedan_red.png
 
 
 

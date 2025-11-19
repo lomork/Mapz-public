@@ -13,6 +13,7 @@ import 'package:location/location.dart';
 import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:model_viewer_plus/model_viewer_plus.dart';
 
 import '../../main.dart';
 import '../../api/google_maps_api_service.dart';
@@ -166,14 +167,39 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     return '';
   }
   String _selectedVehicleAsset = 'arrow';
+  String? _selectedVehicleModel;
 
   final List<Map<String, String>> _availableVehicles = [
-    {'id': 'arrow', 'name': 'Arrow', 'asset': ''},
-    {'id': 'car_red', 'name': 'Red Racer', 'asset': 'assets/images/car_sedan_red.png'},
-    {'id': 'car_blue', 'name': 'Sedan', 'asset': 'assets/images/car_suv_green.png'},
-    {'id': 'car_pickup', 'name': 'PickUp', 'asset': 'assets/images/car_pickuptruck_red.png'},
-    {'id': 'car_taxi', 'name': 'Taxi', 'asset': 'assets/images/car_taxi_yellow.png'},
+    {'id': 'arrow', 'name': 'Arrow', 'asset': '', 'model': ''},
+    {
+      'id': 'sedan',
+      'name': 'Sedan',
+      'asset': 'assets/images/car_sedan.png',
+      'model': 'assets/models/sedan-sports.glb'
+    },
+    {
+      'id': 'suv',
+      'name': 'SUV',
+      'asset': 'assets/images/car_taxi.png',
+      'model': 'assets/models/suv-luxury.glb'
+    },
+    {
+      'id': 'taxi',
+      'name': 'Taxi',
+      'asset': 'assets/images/car_taxi.png',
+      'model': 'assets/models/taxi.glb'
+    },
+    {
+      'id': 'truck',
+      'name': 'Truck',
+      'asset': 'assets/images/car_truck.png',
+      'model': 'assets/models/truck.glb'
+    },
   ];
+
+  double _carScreenX = 0;
+  double _carScreenY = 0;
+  bool _show3DCar = false;
 
   @override
   void initState() {
@@ -759,9 +785,11 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
               _updateNavigationMarkerIcon();
             },
             polylines: _polylines,
-            markers: _isNavigating
+            markers: (_isNavigating && _show3DCar)
+                ? _markers.union(_routeDifferenceMarkers).difference(_navigationMarkers) // Hide nav marker
+                : (_isNavigating
                 ? _navigationMarkers.union(_routeDifferenceMarkers)
-                : _markers.union(_routeDifferenceMarkers),
+                : _markers.union(_routeDifferenceMarkers)),
             zoomControlsEnabled: false,
             myLocationEnabled: false,
             myLocationButtonEnabled: false,
@@ -770,6 +798,30 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                 bottom: _isNavigating ? 100 : MediaQuery.of(context).size.height * 0.2
             ),
           ),
+
+          if (_isNavigating && _show3DCar && _selectedVehicleModel != null && _selectedVehicleModel!.isNotEmpty)
+            Positioned(
+              left: _carScreenX - 100, // Offset by half size (200/2)
+              top: _carScreenY - 100,
+              child: IgnorePointer(
+                child: SizedBox(
+                  width: 200,
+                  height: 200,
+                  child: ModelViewer(
+                    key: ValueKey(_selectedVehicleModel),
+                    src: _selectedVehicleModel!,
+                    alt: "3D Vehicle",
+                    backgroundColor: Colors.transparent,
+                    autoRotate: false,
+                    cameraControls: false,
+                    // This locks the view to look at the back of the car
+                    // Adjust "180deg" if your model faces the wrong way
+                    cameraOrbit: "180deg 75deg 3m",
+                    disableZoom: true,
+                  ),
+                ),
+              ),
+            ),
           if (_isRecalculating)
             Container(
               color: Colors.black.withOpacity(0.5),
@@ -809,16 +861,24 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     final double clampedSize = newSize.clamp(110.0, 300.0);
 
     if (_selectedVehicleAsset == '' || _selectedVehicleAsset == 'arrow') {
-      // Draw the practical arrow
       _navigationMarkerIcon = await _createDynamicMarkerBitmap(clampedSize);
+      _show3DCar = false;
+      _selectedVehicleModel = null;
     } else {
-      // Load the 3D Car Image
-      try {
-        _navigationMarkerIcon = await _createImageMarkerBitmap(_selectedVehicleAsset, clampedSize.toInt());
-      } catch (e) {
-        print("Error loading vehicle asset: $e");
-        // Fallback to arrow if image fails
-        _navigationMarkerIcon = await _createDynamicMarkerBitmap(clampedSize);
+      final vehicle = _availableVehicles.firstWhere((v) => v['asset'] == _selectedVehicleAsset, orElse: () => {});
+
+      if (vehicle.containsKey('model') && vehicle['model']!.isNotEmpty) {
+        _selectedVehicleModel = vehicle['model'];
+        _show3DCar = true; // Enable 3D overlay
+        // Use a transparent icon for the map marker since we show the 3D model
+        _navigationMarkerIcon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue); // Placeholder, ideally transparent
+      } else {
+        _show3DCar = false;
+        try {
+          _navigationMarkerIcon = await _createImageMarkerBitmap(_selectedVehicleAsset, clampedSize.toInt());
+        } catch (e) {
+          _navigationMarkerIcon = await _createDynamicMarkerBitmap(clampedSize);
+        }
       }
     }
 
@@ -837,71 +897,88 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true, // <--- IMPORTANT: Allows taller sheet
       builder: (context) => GlassmorphicContainer(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              "Choose Your Vehicle",
-              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              height: 100,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: _availableVehicles.length,
-                itemBuilder: (context, index) {
-                  final vehicle = _availableVehicles[index];
-                  final isSelected = _selectedVehicleAsset == vehicle['asset'] ||
-                      (_selectedVehicleAsset == 'arrow' && vehicle['id'] == 'arrow');
-                  final bool isArrow = vehicle['id'] == 'arrow';
-
-                  return GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        _selectedVehicleAsset = vehicle['asset']!.isEmpty ? 'arrow' : vehicle['asset']!;
-                      });
-                      _updateNavigationMarkerIcon(); // Refresh marker immediately
-                      Navigator.pop(context);
-                    },
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 12),
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: isSelected ? Colors.blue.withOpacity(0.3) : Colors.transparent,
-                        border: isSelected ? Border.all(color: Colors.blue, width: 2) : null,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          // Show Icon or Image
-                          isArrow
-                              ? const Icon(Icons.navigation, color: Colors.white, size: 40)
-                              : Image.asset(vehicle['asset']!, width: 40, height: 40),
-                          const SizedBox(height: 8),
-                          Text(
-                            vehicle['name']!,
-                            style: TextStyle(
-                              color: isSelected ? Colors.blueAccent : Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
+        child: Container(
+          height: 280, // <--- Increased height for 3D models
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                "Choose Your Ride",
+                style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
               ),
-            ),
-          ],
+              const SizedBox(height: 20),
+              Expanded(
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _availableVehicles.length,
+                  itemBuilder: (context, index) {
+                    final vehicle = _availableVehicles[index];
+                    final bool isSelected = _selectedVehicleAsset == vehicle['asset'];
+                    final bool isArrow = vehicle['id'] == 'arrow';
+
+                    return GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          // If empty asset, it means 'arrow'
+                          _selectedVehicleAsset = vehicle['asset']!;
+                        });
+                        _updateNavigationMarkerIcon(); // Force refresh map marker
+                        Navigator.pop(context);
+                      },
+                      child: Container(
+                        width: 160, // <--- Wider container for 3D view
+                        margin: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: isSelected ? Colors.blue.withOpacity(0.3) : Colors.white.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(20),
+                          border: isSelected ? Border.all(color: Colors.blueAccent, width: 2) : null,
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Expanded(
+                              child: isArrow
+                                  ? const Icon(Icons.navigation, color: Colors.white, size: 60)
+                              // --- THIS IS THE CHANGE: Use ModelViewer for cars ---
+                                  : ClipRRect(
+                                borderRadius: BorderRadius.circular(16),
+                                child: ModelViewer(
+                                  key: ValueKey(vehicle['model']), // Key ensures it rebuilds correctly
+                                  src: vehicle['model']!, // Uses the .glb file path
+                                  alt: "3D Model of ${vehicle['name']}",
+                                  autoRotate: true, // Makes it spin!
+                                  cameraControls: false, // Disable touch (so tapping selects it)
+                                  backgroundColor: Colors.transparent,
+                                  disableZoom: true,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              vehicle['name']!,
+                              style: TextStyle(
+                                color: isSelected ? Colors.blueAccent : Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
-
   void _updateNavigationMarkers() {
     if (!mounted || _lastLocation == null || _navigationMarkerIcon == null) return;
 
@@ -1643,7 +1720,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   void _listenToLocationForNavigation() {
     final locationService = Location();
     _navigationLocationSubscription =
-        locationService.onLocationChanged.listen((LocationData currentLocation) {
+        locationService.onLocationChanged.listen((LocationData currentLocation) async{
           if (!mounted || !_isNavigating) return;
 
           final newLatLng =
@@ -1654,30 +1731,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
           // --- REROUTE LOGIC WITH BUFFER ---
           if (!_isRecalculating) {
-            // Check distance using your polyline points
-            bool isCurrentlyOffRoute = _isOffRoute(
-                newLatLng, _routes[_selectedRouteIndex].polylinePoints);
-
-            if (isCurrentlyOffRoute) {
-              _offRouteStrikeCount++;
-              print("Off-route strike: $_offRouteStrikeCount"); // Debugging
-            } else {
-              _offRouteStrikeCount = 0; // Reset if we are back on track
-            }
-
-            // Only recalculate if we have enough strikes
-            if (_offRouteStrikeCount >= _requiredStrikesForReroute) {
-              print("Rerouting triggered!");
-              _offRouteStrikeCount = 0; // Reset counter
-              _recalculateRoute(newLatLng);
-              return; // Stop processing this update
-            }
-          }
-
-          _updateNavigationMarkers();
-
-          // Only animate camera if we are NOT recalculating to avoid jumping
-          if (!_isRecalculating) {
+            // 1. Update Camera
             mapController.animateCamera(CameraUpdate.newCameraPosition(
               CameraPosition(
                 target: newLatLng,
@@ -1686,6 +1740,40 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                 bearing: newRotation,
               ),
             ));
+
+            // 2. Update 3D Car Position (Sync with screen pixels)
+            if (_show3DCar && _isMapControllerInitialized) {
+              try {
+                ScreenCoordinate screenPos = await mapController.getScreenCoordinate(newLatLng);
+                setState(() {
+                  _carScreenX = screenPos.x.toDouble();
+                  _carScreenY = screenPos.y.toDouble();
+                });
+              } catch(e) {
+                print("Error syncing 3D car: $e");
+              }
+            }
+
+            // 3. Reroute Logic
+            bool isCurrentlyOffRoute = _isOffRoute(
+                newLatLng, _routes[_selectedRouteIndex].polylinePoints);
+            if (isCurrentlyOffRoute) {
+              _offRouteStrikeCount++;
+            } else {
+              _offRouteStrikeCount = 0;
+            }
+
+            if (_offRouteStrikeCount >= _requiredStrikesForReroute) {
+              _offRouteStrikeCount = 0;
+              _recalculateRoute(newLatLng);
+              return;
+            }
+          }
+
+          _updateNavigationMarkers();
+
+          // Only animate camera if we are NOT recalculating to avoid jumping
+          if (!_isRecalculating) {
             _updateNavigationState(newLatLng);
           }
         });
