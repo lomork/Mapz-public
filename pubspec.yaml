@@ -99,6 +99,11 @@ flutter:
     - assets/images/Tree1.svg
     - assets/images/Tree2.svg
     - assets/images/Tree3.svg
+    - assets/images/car_pickuptruck_red.png
+    - assets/images/car_suv_green.png
+    - assets/images/car_taxi_yellow.png
+    - assets/images/motorcycle_red.png
+    - assets/images/car_sedan_red.png
 
 
 

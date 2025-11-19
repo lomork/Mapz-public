@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' show cos, sqrt, asin, atan2, sin, pi, min, max;
-import 'dart:typed_data';
+import 'dart:math' show cos, sqrt, asin, atan2, sin, pi, min, max, pow;
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
@@ -25,6 +23,8 @@ import '../../widgets/animated_route_line.dart';
 import '../../widgets/pulsing_start_button.dart';
 import '../../utils/loading_overlay.dart';
 import '../../providers/settings_provider.dart';
+
+enum StepTravelMode { walking, transit, driving, bicycling }
 
 class FullTransitRoute {
   final String duration;
@@ -109,7 +109,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   PlaceDetails? _destination;
   FullTransitRoute? _detailedRoute;
   BitmapDescriptor? _circleStopIcon;
-  final Map<String, BitmapDescriptor> _busNumberIcons = {};
+
   bool _avoidTolls = false;
   bool _avoidHighways = false;
   bool _avoidFerries = false;
@@ -133,10 +133,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   BitmapDescriptor? _navigationMarkerIcon;
   final Set<Marker> _navigationMarkers = {};
 
-  // TTS FEATURE: TTS instance
   late FlutterTts _flutterTts;
-  bool _navigationStarted = false; // TTS FIX: Flag to control initial speech
-  // SPEED LIMIT FEATURE: State variables
+  bool _navigationStarted = false;
   int? _currentSpeedLimit;
   Timer? _speedLimitTimer;
   final Stopwatch _navigationStopwatch = Stopwatch();
@@ -144,40 +142,57 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   double _currentZoom = 18.0;
   double _currentUserRotation = 0.0;
 
-  // SCENIC ROUTE: State variables
-
   int _fastestRouteIndex = 0;
   int _scenicRouteIndex = 0;
 
-  // REROUTE: State variables
   bool _isRecalculating = false;
 
-
-  // ANIMATION: Controller for the progress bar
   AnimationController? _progressAnimationController;
   Animation<double>? _progressAnimation;
 
+  int _offRouteStrikeCount = 0;
+  static const int _requiredStrikesForReroute = 3;
+
+  String _getDirectionAbbreviation(String instruction) {
+    final lower = instruction.toLowerCase();
+    if (lower.contains('northwest') || lower.contains('north-west')) return 'NW';
+    if (lower.contains('northeast') || lower.contains('north-east')) return 'NE';
+    if (lower.contains('southwest') || lower.contains('south-west')) return 'SW';
+    if (lower.contains('southeast') || lower.contains('south-east')) return 'SE';
+    if (lower.contains('north')) return 'N';
+    if (lower.contains('south')) return 'S';
+    if (lower.contains('east')) return 'E';
+    if (lower.contains('west')) return 'W';
+    return '';
+  }
+  String _selectedVehicleAsset = 'arrow';
+
+  final List<Map<String, String>> _availableVehicles = [
+    {'id': 'arrow', 'name': 'Arrow', 'asset': ''},
+    {'id': 'car_red', 'name': 'Red Racer', 'asset': 'assets/images/car_sedan_red.png'},
+    {'id': 'car_blue', 'name': 'Sedan', 'asset': 'assets/images/car_suv_green.png'},
+    {'id': 'car_pickup', 'name': 'PickUp', 'asset': 'assets/images/car_pickuptruck_red.png'},
+    {'id': 'car_taxi', 'name': 'Taxi', 'asset': 'assets/images/car_taxi_yellow.png'},
+  ];
 
   @override
   void initState() {
     super.initState();
     _destination = widget.destination;
-    // ANIMATION: Initialize progress bar controller
     _progressAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 500), // Quick animation for progress
+      duration: const Duration(milliseconds: 500),
       vsync: this,
     );
     _initializeDirections();
     _createStopIcons();
     _loadMutePreference();
-    _initTts(); // TTS VOICE SELECTION & INIT
+    _initTts();
     themeNotifier.addListener(_updateMapStyle);
-
   }
 
-  // TTS VOICE SELECTION & INIT: Method to setup TTS with selected voice
   Future<void> _initTts() async {
     _flutterTts = FlutterTts();
+    // Use the dynamic voice logic from MapScreen if possible
     final prefs = await SharedPreferences.getInstance();
     final voiceName = prefs.getString('selectedTtsVoice');
     if (voiceName != null) {
@@ -209,7 +224,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     super.dispose();
   }
 
-  // TTS FEATURE: Method to speak text
   Future<void> _speak(String text) async {
     if (!_isMuted && text.isNotEmpty) {
       await _flutterTts.speak(text.replaceAll(RegExp(r'<[^>]*>|&[^;]+;'), ' '));
@@ -218,25 +232,20 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
   void _updateMapStyle() {
     if (!_isMapControllerInitialized || !mounted) return;
-
-    // Check the app's current theme mode (light, dark, or system)
     final themeMode = themeNotifier.value;
     final isDarkMode = themeMode == ThemeMode.dark ||
         (themeMode == ThemeMode.system &&
             MediaQuery.of(context).platformBrightness == Brightness.dark);
 
     if (isDarkMode) {
-      // If it's dark mode, load and apply your custom dark style
       rootBundle.loadString('assets/map_style_dark.json').then((style) {
         if (mounted) mapController.setMapStyle(style);
       });
     } else {
-      // If it's light mode, pass null to use the default Google Maps style
       mapController.setMapStyle(null);
     }
   }
 
-  // SPEED LIMIT FEATURE: Method to fetch speed limit
   Future<void> _getSpeedLimit(LatLng point) async {
     try {
       final apiService = Provider.of<GoogleMapsApiService>(context, listen: false);
@@ -255,7 +264,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     }
   }
 
-
   Future<void> _loadMutePreference() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -268,37 +276,27 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     await prefs.setBool('isMuted', isMuted);
   }
 
-
   Future<void> _createStopIcons() async {
     _circleStopIcon = await _createCircleStopMarkerBitmap();
     setState(() {});
   }
 
   Future<void> _initializeDirections() async {
-    // Show the loading overlay immediately at the very start.
-    // Use a post-frame callback to ensure the first build is complete.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       LoadingOverlay.show(context);
 
       try {
-        print("--- DirectionsScreen: Initializing ---");
-
-        // STEP 1: Get Origin Coords
         final originLatLng = widget.originCoordinates;
         _lastLocation = originLatLng;
-        print("1. Got user location from MapScreen: $originLatLng");
 
-        // STEP 2: Get Origin Address
         final originAddress = await _reverseGeocode(originLatLng);
-        print("2. Got origin address: '$originAddress'");
 
         if (!mounted) {
           LoadingOverlay.hide();
           return;
         }
 
-        // STEP 3: Set initial state in one go
         setState(() {
           _origin = PlaceDetails(
             placeId: 'user_location',
@@ -308,10 +306,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           );
         });
 
-        // STEP 4: Now get the directions.
-        // The _getDirections method will handle hiding the overlay in its `finally` block.
         await _getDirections();
-        print("3. Get directions finished.");
 
       } catch (e) {
         print("CRITICAL ERROR during initialization: $e");
@@ -338,7 +333,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       return;
     }
 
-    // Show the overlay directly at the start. No setState needed.
     LoadingOverlay.show(context);
     _routeDifferenceMarkers.clear();
 
@@ -359,6 +353,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       );
 
       if (data['status'] == 'OK') {
+        // --- 1. Process Driving/Walking/Cycling Routes ---
         final List<RouteInfo> fetchedRoutes = [];
         for (var route in data['routes']) {
           final leg = route['legs'][0];
@@ -368,6 +363,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
               .toList();
           final durationText = leg['duration_in_traffic']?['text'] ?? leg['duration']['text'];
           final durationValue = leg['duration_in_traffic']?['value'] ?? leg['duration']['value'];
+
           fetchedRoutes.add(RouteInfo(
             duration: durationText,
             durationValue: durationValue,
@@ -378,12 +374,60 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           ));
         }
 
-        // This setState is CORRECT because it's updating the UI with the new route data.
+        // --- 2. FIX: Process Transit Routes Correctly ---
+        if (_travelMode == TravelMode.transit) {
+          final List<FullTransitRoute> parsedTransitRoutes = [];
+          for (var route in data['routes']) {
+            final leg = route['legs'][0];
+            final List<RouteStep> steps = [];
+
+            for (var step in leg['steps']) {
+              final String mode = step['travel_mode'];
+              StepTravelMode stepMode = StepTravelMode.walking;
+              String? line;
+              String? vehicle;
+
+              if (mode == 'TRANSIT') {
+                stepMode = StepTravelMode.transit;
+                if (step['transit_details'] != null) {
+                  line = step['transit_details']['line']['short_name'] ??
+                      step['transit_details']['line']['name'];
+                  vehicle = step['transit_details']['line']['vehicle']['type'];
+                }
+              }
+
+              steps.add(RouteStep(
+                instruction: _stripHtmlIfNeeded(step['html_instructions']),
+                distance: step['distance']['text'],
+                duration: step['duration']['text'],
+                travelMode: stepMode,
+                lineName: line,
+                vehicleType: vehicle,
+                polylinePoints: PolylinePoints()
+                    .decodePolyline(step['polyline']['points'])
+                    .map((p) => LatLng(p.latitude, p.longitude))
+                    .toList(),
+              ));
+            }
+
+            parsedTransitRoutes.add(FullTransitRoute(
+                duration: leg['duration']['text'],
+                distance: leg['distance']['text'],
+                steps: steps
+            ));
+          }
+          _transitRoutes = parsedTransitRoutes;
+        }
+
         if (mounted) {
           setState(() {
             _routes = fetchedRoutes;
             _processRoutes();
-            _transitRoutes = []; // Clear transit routes when fetching driving routes
+            // Don't clear transit routes here, we just set them above if needed
+            if (_travelMode != TravelMode.transit) {
+              _transitRoutes = [];
+            }
+
             _detailedRoute = null;
 
             if (_routes.isNotEmpty) {
@@ -395,10 +439,10 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           });
         }
       } else {
-        // If status is not OK, make sure the routes list is empty
         if(mounted) {
           setState(() {
             _routes = [];
+            _transitRoutes = [];
           });
         }
       }
@@ -406,24 +450,24 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       _updateMarkersAndPolylines();
     } catch (e) {
       debugPrint("Error fetching directions: $e");
-      if(mounted) { // Also clear routes on error
+      if(mounted) {
         setState(() {
           _routes = [];
+          _transitRoutes = [];
         });
       }
     } finally {
-      // Always hide the overlay when the process is finished, success or fail.
       LoadingOverlay.hide();
       if (mounted) {
+        _isRecalculating = false;
         _updateRouteDifferenceMarkers();
       }
     }
   }
 
-  // SCENIC ROUTE: Method to process and rank routes
   void _processRoutes() {
     if (_routes.isEmpty) return;
-    _fastestRouteIndex = 0; // Google API's first route is usually the fastest
+    _fastestRouteIndex = 0;
     _scenicRouteIndex = 0;
     double maxCurviness = 0;
     for (int i = 0; i < _routes.length; i++) {
@@ -432,34 +476,30 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         _scenicRouteIndex = i;
       }
     }
-    // Set the initial selected route based on the chosen type
     _selectedRouteIndex = _routeType == RouteType.fastest ? _fastestRouteIndex : _scenicRouteIndex;
   }
-
-  // lib/screens/map/directions_screen.dart
 
   Set<Polyline> _createTrafficPolylines(List<dynamic> steps) {
     final Set<Polyline> polylines = {};
     if (steps.isEmpty) return polylines;
 
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final Color baseColor = isDarkMode ? Colors.greenAccent : Colors.blueAccent;
+
     for (var i = 0; i < steps.length; i++) {
       final step = steps[i];
       final duration = step['duration']['value'];
-      // duration_in_traffic may not exist if there's no traffic, so default to the base duration
       final durationInTraffic = step['duration_in_traffic']?['value'] ?? duration;
-
-      // Calculate the delay in seconds
       final delay = durationInTraffic - duration;
 
-      // Assign color based on delay
-      Color color = Colors.green.shade600; // No traffic
-      if (delay > 120) { // Over 2 minutes of delay
+      Color color = baseColor;
+
+      if (delay > 120) {
         color = Colors.red.shade800;
-      } else if (delay > 30) { // Over 30 seconds of delay
+      } else if (delay > 30) {
         color = Colors.orange.shade700;
       }
 
-      // Decode the polyline for this specific step
       final points = PolylinePoints()
           .decodePolyline(step['polyline']['points'])
           .map((p) => LatLng(p.latitude, p.longitude))
@@ -477,7 +517,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     return polylines;
   }
 
-// SCENIC ROUTE: Helper to calculate the "curviness" of a route
   double _calculateCurviness(List<LatLng> polyline) {
     if (polyline.length < 3) return 0.0;
     double totalBearingChange = 0.0;
@@ -491,14 +530,13 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
       double bearingChange = (bearing2 - bearing1).abs();
       if (bearingChange > 180) {
-        bearingChange = 360 - bearingChange; // Handle wrapping around 360 degrees
+        bearingChange = 360 - bearingChange;
       }
       totalBearingChange += bearingChange;
     }
     return totalBearingChange;
   }
 
-// SCENIC ROUTE: Helper to calculate bearing between two points
   double _calculateBearing(LatLng start, LatLng end) {
     final double startLat = start.latitude * pi / 180;
     final double startLng = start.longitude * pi / 180;
@@ -510,7 +548,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     double x = cos(startLat) * sin(endLat) - sin(startLat) * cos(endLat) * cos(dLng);
 
     double bearing = atan2(y, x) * 180 / pi;
-    return (bearing + 360) % 360; // Normalize to 0-360
+    return (bearing + 360) % 360;
   }
 
   Future<BitmapDescriptor> _createTimeDifferenceMarkerBitmap(String text) async {
@@ -595,12 +633,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     }
   }
 
-// Replace your entire _updateMarkersAndPolylines method with this one.
-
   void _updateMarkersAndPolylines() {
     if (!mounted || _origin == null || _destination == null) return;
 
-    // --- FIX 1: The 'isTransit' variable is now correctly defined ---
     final bool isTransit = _travelMode == TravelMode.transit;
 
     final newMarkers = <Marker>{
@@ -611,6 +646,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
     final bool hasRoutes = (_travelMode != TravelMode.transit && _routes.isNotEmpty) ||
         (_travelMode == TravelMode.transit && _transitRoutes.isNotEmpty);
+
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final Color routeColor = isDarkMode ? Colors.greenAccent : Colors.blueAccent;
 
     if (hasRoutes) {
       List<LatLng> points = [];
@@ -626,7 +664,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           newPolylines.add(Polyline(
             polylineId: const PolylineId('route_walking'),
             points: points,
-            color: Colors.blueAccent,
+            color: routeColor,
             width: 6,
             patterns: [PatternItem.dot, PatternItem.gap(10)],
           ));
@@ -635,7 +673,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           newPolylines.add(Polyline(
             polylineId: const PolylineId('route_cycling'),
             points: points,
-            color: Colors.green,
+            color: routeColor,
             width: 6,
             patterns: [PatternItem.dash(20), PatternItem.gap(15)],
           ));
@@ -646,7 +684,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
               newPolylines.add(Polyline(
                 polylineId: PolylineId('transit_step_${step.hashCode}'),
                 points: step.polylinePoints,
-                color: step.travelMode == StepTravelMode.walking ? Colors.grey : Colors.blue,
+                color: step.travelMode == StepTravelMode.walking ? Colors.grey : routeColor,
                 width: 6,
                 patterns: step.travelMode == StepTravelMode.walking ? [PatternItem.dot, PatternItem.gap(10)] : [],
               ));
@@ -663,7 +701,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       _polylines.addAll(newPolylines);
     });
 
-    // --- FIX 2: This logic now correctly runs when a route IS found ---
     if (hasRoutes && _isMapControllerInitialized && !_isNavigating) {
       List<LatLng> fullRouteForBounds = isTransit
           ? _transitRoutes[_selectedRouteIndex].steps.expand((s) => s.polylinePoints).toList()
@@ -702,7 +739,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     mapController = controller;
     _isMapControllerInitialized = true;
     final isDarkMode = MediaQuery.of(context).platformBrightness == Brightness.dark;
-
     // --- CHANGED: Conditionally load the dark style or pass null for default light style ---
     _updateMapStyle();
   }
@@ -717,11 +753,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
             onMapCreated: _onMapCreated,
             initialCameraPosition: CameraPosition(target: widget.destination.coordinates, zoom: 12),
             onCameraMove: (CameraPosition position) {
-              // Continuously update the zoom level as the user moves the map
               _currentZoom = position.zoom;
             },
             onCameraIdle: () {
-              // When the user stops moving the map, trigger the marker resize
               _updateNavigationMarkerIcon();
             },
             polylines: _polylines,
@@ -750,7 +784,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                 ),
               ),
             ),
-          // FIX: Call the list-returning function with a spread operator
           if (!_isRecalculating)
             if (_isNavigating)
               ..._buildNavigationUI()
@@ -768,35 +801,123 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     return [
       _buildFuturisticTopCard(),
       _buildFuturisticBottomPanel(),
-      // You can keep other FloatingActionButtons like recenter, speed limit, etc.
-      // ...
     ];
   }
 
   Future<void> _updateNavigationMarkerIcon() async {
-    // The sizing formula remains the same
-    final double newSize = 80 + (_currentZoom - 12) * 15;
-    final double clampedSize = newSize.clamp(80.0, 220.0);
+    final double newSize = 110 + (_currentZoom - 12) * 20;
+    final double clampedSize = newSize.clamp(110.0, 300.0);
 
-    // --- CHANGED: Call the new drawing method instead of _getResizedMarkerIcon ---
-    _navigationMarkerIcon = await _createDynamicMarkerBitmap(clampedSize);
+    if (_selectedVehicleAsset == '' || _selectedVehicleAsset == 'arrow') {
+      // Draw the practical arrow
+      _navigationMarkerIcon = await _createDynamicMarkerBitmap(clampedSize);
+    } else {
+      // Load the 3D Car Image
+      try {
+        _navigationMarkerIcon = await _createImageMarkerBitmap(_selectedVehicleAsset, clampedSize.toInt());
+      } catch (e) {
+        print("Error loading vehicle asset: $e");
+        // Fallback to arrow if image fails
+        _navigationMarkerIcon = await _createDynamicMarkerBitmap(clampedSize);
+      }
+    }
 
-    // Trigger a UI update to show the new marker
     _updateNavigationMarkers();
   }
 
-  // This helper method updates the state with the new marker
+  Future<BitmapDescriptor> _createImageMarkerBitmap(String assetPath, int width) async {
+    ByteData data = await rootBundle.load(assetPath);
+    ui.Codec codec = await ui.instantiateImageCodec(data.buffer.asUint8List(), targetWidth: width);
+    ui.FrameInfo fi = await codec.getNextFrame();
+    final Uint8List resizedBytes = (await fi.image.toByteData(format: ui.ImageByteFormat.png))!.buffer.asUint8List();
+    return BitmapDescriptor.fromBytes(resizedBytes);
+  }
+
+  void _showVehicleSelector() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => GlassmorphicContainer(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              "Choose Your Vehicle",
+              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 100,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: _availableVehicles.length,
+                itemBuilder: (context, index) {
+                  final vehicle = _availableVehicles[index];
+                  final isSelected = _selectedVehicleAsset == vehicle['asset'] ||
+                      (_selectedVehicleAsset == 'arrow' && vehicle['id'] == 'arrow');
+                  final bool isArrow = vehicle['id'] == 'arrow';
+
+                  return GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _selectedVehicleAsset = vehicle['asset']!.isEmpty ? 'arrow' : vehicle['asset']!;
+                      });
+                      _updateNavigationMarkerIcon(); // Refresh marker immediately
+                      Navigator.pop(context);
+                    },
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 12),
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: isSelected ? Colors.blue.withOpacity(0.3) : Colors.transparent,
+                        border: isSelected ? Border.all(color: Colors.blue, width: 2) : null,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // Show Icon or Image
+                          isArrow
+                              ? const Icon(Icons.navigation, color: Colors.white, size: 40)
+                              : Image.asset(vehicle['asset']!, width: 40, height: 40),
+                          const SizedBox(height: 8),
+                          Text(
+                            vehicle['name']!,
+                            style: TextStyle(
+                              color: isSelected ? Colors.blueAccent : Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _updateNavigationMarkers() {
     if (!mounted || _lastLocation == null || _navigationMarkerIcon == null) return;
+
+    final Offset anchor = (_selectedVehicleAsset == '' || _selectedVehicleAsset == 'arrow')
+        ? const Offset(0.5, 0.5)
+        : const Offset(0.5, 0.70);
 
     final marker = Marker(
       markerId: const MarkerId('navigation_user'),
       position: _lastLocation!,
       icon: _navigationMarkerIcon!,
       rotation: _currentUserRotation,
-      anchor: const Offset(0.5, 0.5),
+      anchor: anchor,
       flat: true,
       zIndex: 2.0,
+      onTap: _showVehicleSelector,
     );
 
     setState(() {
@@ -805,8 +926,11 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     });
   }
 
-  // --- DESIGN OVERHAUL: New "glass" top card ---
   Widget _buildFuturisticTopCard() {
+    // Determine if we are in dark mode for contrast
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final String directionAbbr = _getDirectionAbbreviation(_navInstruction);
+
     return Positioned(
       top: MediaQuery.of(context).padding.top + 10,
       left: 15,
@@ -815,124 +939,284 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(_navManeuverIcon, color: Colors.white, size: 48),
-            const SizedBox(height: 8),
-            Text(
-              _navInstruction,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
             Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Expanded(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: LinearProgressIndicator(
-                      value: _progressToNextManeuver,
-                      minHeight: 10,
-                      backgroundColor: Colors.white.withOpacity(0.3),
-                      valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                          _navManeuverIcon,
+                          color: Colors.white,
+                          size: 42
+                      ),
                     ),
-                  ),
+                    // Only show text if we found a direction
+                    if (directionAbbr.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        directionAbbr,
+                        style: const TextStyle(
+                          color: Colors.amber, // Distinct color for direction
+                          fontWeight: FontWeight.w900,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ]
+                  ],
                 ),
                 const SizedBox(width: 16),
-                Text(_distanceToNextManeuver,
-                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+
+                // 2. The Detail (Text) - Left Aligned
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _navInstruction,
+                        textAlign: TextAlign.left, // Left align text
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22, // Slightly smaller to fit better
+                          fontWeight: FontWeight.bold,
+                          height: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      // Distance moved here for better grouping
+                      Text(
+                          _distanceToNextManeuver,
+                          style: TextStyle(
+                              color: Colors.white.withOpacity(0.9),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w500
+                          )
+                      ),
+                    ],
+                  ),
+                ),
               ],
-            )
+            ),
+            const SizedBox(height: 16),
+
+            // 3. Progress Bar
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: AnimatedBuilder(
+                animation: _progressAnimationController!,
+                builder: (context, child) {
+                  return LinearProgressIndicator(
+                    value: _progressAnimation?.value ?? _progressToNextManeuver,
+                    minHeight: 6,
+                    backgroundColor: Colors.white.withOpacity(0.2),
+                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                  );
+                },
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  // --- DESIGN OVERHAUL: New "glass" bottom panel ---
   Widget _buildFuturisticBottomPanel() {
     final arrivalTime = DateTime.now().add(Duration(seconds: _routes[_selectedRouteIndex].durationValue));
     final timeFormat = DateFormat.jm();
 
     return Positioned(
-      bottom: MediaQuery.of(context).padding.bottom + 10,
+      bottom: MediaQuery.of(context).padding.bottom + 20,
       left: 15,
       right: 15,
-      child: GlassmorphicContainer(
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  timeFormat.format(arrivalTime),
-                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  "${_navDistance} · ${_navEta}",
-                  style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 16),
-                ),
-              ],
-            ),
-            Row(
-              children: [
-                // Mute Button
-                Container(
-                  decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.black.withOpacity(0.3)),
-                  child: IconButton(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // 1. Info Card (Glass)
+          Expanded(
+            child: GlassmorphicContainer(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        timeFormat.format(arrivalTime),
+                        style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                      ),
+                      Row(
+                        children: [
+                          Text(
+                            _navEta,
+                            style: const TextStyle(color: Colors.greenAccent, fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            " · $_navDistance",
+                            style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 16),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  // Mute Button tucked inside the info card
+                  IconButton(
                     icon: Icon(_isMuted ? Icons.volume_off : Icons.volume_up, color: Colors.white),
-                    onPressed: () { /* Mute logic */ },
+                    onPressed: () {
+                      setState(() => _isMuted = !_isMuted);
+                      _saveMutePreference(_isMuted);
+                    },
                   ),
-                ),
-                const SizedBox(width: 16),
-                // End Button
-                Container(
-                  decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.red),
-                  child: IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: _stopNavigation,
-                  ),
-                ),
-              ],
-            )
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(width: 12),
+
+          // 2. BIG RED EXIT BUTTON (Safety Feature)
+          // Separated from the rest so it's distinct and easy to hit
+          GestureDetector(
+            onTap: _stopNavigation,
+            child: Container(
+              height: 64, // Match height of glass container roughly
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              decoration: BoxDecoration(
+                  color: Colors.red.shade600,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.red.withOpacity(0.4),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    )
+                  ]
+              ),
+              child: const Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.close, color: Colors.white, size: 28),
+                  Text("EXIT", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold))
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- NEW: Rectangular Transit Route Box with Pills ---
+  Widget _buildTransitRouteOption(int index) {
+    final route = _transitRoutes[index];
+    final isSelected = _selectedRouteIndex == index;
+
+    return GestureDetector(
+      onTap: () => _onRouteTapped(index),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue.withOpacity(0.1) : Theme.of(context).cardColor,
+          border: Border.all(
+              color: isSelected ? Colors.blue : Colors.grey.withOpacity(0.3),
+              width: isSelected ? 2 : 1
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 1. ETA / Duration
+            Text(
+              route.duration,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            // 2. Steps Pills
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: route.steps.map((step) {
+                  return Row(
+                    children: [
+                      _buildStepPill(step),
+                      // Arrow separator if not last
+                      if (step != route.steps.last)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 8.0),
+                          child: Icon(Icons.arrow_forward, size: 14, color: Colors.grey),
+                        ),
+                    ],
+                  );
+                }).toList(),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  // --- NEW TRANSIT UI: A new panel for displaying transit routes ---
+  Widget _buildStepPill(RouteStep step) {
+    if (step.travelMode == StepTravelMode.walking) {
+      return const Icon(Icons.directions_walk, size: 32, color: Colors.grey);
+    } else {
+      // Transit pill
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.blue.shade50, // Light blue bg
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.blue.shade200),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(getTransitIcon(step.vehicleType), size: 32, color: Colors.blue.shade800),
+            if (step.lineName != null) ...[
+              const SizedBox(width: 8),
+              Text(
+                step.lineName!,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue.shade900,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+  }
+
   Widget _buildTransitPanel() {
     if (_transitRoutes.isEmpty) return const Center(child: Text("No transit routes found."));
 
-    return ListView.builder(
+    return ListView.separated(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 16), // Bottom padding for list
       itemCount: _transitRoutes.length,
+      separatorBuilder: (ctx, i) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
-        // This is a simplified card. Tapping it would show the full timeline.
-        final route = _transitRoutes[index];
-        final isSelected = _selectedRouteIndex == index;
-        return Card(
-          color: isSelected ? Colors.blue.withOpacity(0.1) : null,
-          child: ListTile(
-            onTap: () => _onRouteTapped(index),
-            title: Text("Option ${index + 1}: ${route.duration} (${route.distance})"),
-            subtitle: Row(
-              children: route.steps.where((s) => s.travelMode == StepTravelMode.transit).map((step) {
-                return Padding(
-                  padding: const EdgeInsets.only(right: 4.0),
-                  child: Icon(getTransitIcon(step.vehicleType), size: 16),
-                );
-              }).toList(),
-            ),
-          ),
-        );
+        return _buildTransitRouteOption(index);
       },
     );
   }
 
-  // --- NEW TRANSIT UI: The detailed vertical timeline view ---
   Widget _buildRouteDetailsContent(ScrollController scrollController, FullTransitRoute route) {
     return ListView.builder(
       controller: scrollController,
@@ -941,7 +1225,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         final step = route.steps[index];
         final isFirst = index == 0;
         final isLast = index == route.steps.length - 1;
-        // This is a custom widget you would build to display each step
         return _TransitStepWidget(step: step, isFirst: isFirst, isLast: isLast);
       },
     );
@@ -963,7 +1246,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           ),
           child: Row(
             children: [
-              // TTS BUG FIX: Stop TTS when back button is pressed
               IconButton(
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () {
@@ -1035,7 +1317,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     }
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(vertical: 16.0),
+      // --- UPDATED: Reduced top padding to remove empty space ---
+      padding: const EdgeInsets.fromLTRB(0, 8, 0, 16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1044,11 +1327,12 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
             child: Container(
                 width: 40,
                 height: 5,
+                margin: const EdgeInsets.only(bottom: 8), // Reduced margin
                 decoration: BoxDecoration(
                     color: Colors.grey[400],
                     borderRadius: BorderRadius.circular(12))),
           ),
-          const SizedBox(height: 16),
+          // Removed the SizedBox(height: 16) that was here
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child: Text(
@@ -1147,12 +1431,11 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text("Start time: ${timeFormat.format(now)}"),
-              Text("Reaching time: ${timeFormat.format(arrivalTime)}"),
+              Text("Start: ${timeFormat.format(now)}"),
+              Text("Arrival: ${timeFormat.format(arrivalTime)}"),
             ],
           ),
           const SizedBox(height: 8),
-          // THIS IS THE CORRECTED ROW
           Row(
             children: [
               const Icon(Icons.directions_car, color: Colors.blue),
@@ -1259,40 +1542,15 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     return LatLngBounds(northeast: LatLng(x1!, y1!), southwest: LatLng(x0!, y0!));
   }
 
-  Future<BitmapDescriptor> _createBusNumberMarkerBitmap(String text) async {
-    final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
-    final ui.Canvas canvas = ui.Canvas(pictureRecorder);
-    final ui.Paint paint1 = ui.Paint()..color = Colors.blueAccent;
-    const int size = 100;
-
-    canvas.drawRect(ui.Rect.fromLTWH(0.0, 0.0, size.toDouble(), size.toDouble() / 2), paint1);
-
-    final TextPainter painter = TextPainter(textDirection: ui.TextDirection.ltr); // FIX: Added ui. prefix
-    painter.text = TextSpan(
-      text: text,
-      style: const TextStyle(
-          fontSize: 40.0, color: Colors.white, fontWeight: FontWeight.bold),
-    );
-    painter.layout();
-    painter.paint(
-      canvas,
-      Offset((size * 0.5) - (painter.width * 0.5), (size * 0.25) - (painter.height * 0.5)),
-    );
-
-    final img = await pictureRecorder.endRecording().toImage(size, (size / 2).toInt());
-    final data = await img.toByteData(format: ui.ImageByteFormat.png);
-    return BitmapDescriptor.fromBytes(data!.buffer.asUint8List());
-  }
-
   Future<BitmapDescriptor> _createCircleStopMarkerBitmap() async {
     final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
     final ui.Canvas canvas = ui.Canvas(pictureRecorder);
-    final ui.Paint paint = ui.Paint()..color = Colors.white; // FIX: Added ui. prefix
-    final ui.Paint borderPaint = ui.Paint() // FIX: Added ui. prefix
+    final ui.Paint paint = ui.Paint()..color = Colors.white;
+    final ui.Paint borderPaint = ui.Paint()
       ..color = Colors.grey.shade600
       ..strokeWidth = 10
       ..style = PaintingStyle.stroke;
-    final ui.Paint innerPaint = ui.Paint()..color = Colors.grey.shade400; // FIX: Added ui. prefix
+    final ui.Paint innerPaint = ui.Paint()..color = Colors.grey.shade400;
 
     const double size = 100.0;
 
@@ -1308,17 +1566,15 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   void _startNavigation() async{
     if (_routes.isEmpty) return;
     await _updateNavigationMarkerIcon();
-    WakelockPlus.enable(); // WAKELOCK: Keep screen on
+    WakelockPlus.enable();
     setState(() {
       _isNavigating = true;
-      _navigationStarted = true; // TTS FIX: Flag to control initial speech
+      _navigationStarted = true;
     });
     _navigationStopwatch.start();
-    // TTS FIX: Speak the first instruction only when navigation starts
     _speak(_navInstruction);
     _listenToLocationForNavigation();
 
-    // SPEED LIMIT: Start the timer when navigation begins
     _speedLimitTimer?.cancel();
     _speedLimitTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
       if (_lastLocation != null) {
@@ -1328,16 +1584,16 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   }
 
   void _stopNavigation() {
-    WakelockPlus.disable(); // WAKELOCK: Allow screen to turn off
+    WakelockPlus.disable();
     _navigationLocationSubscription?.cancel();
-    _speedLimitTimer?.cancel(); // SPEED LIMIT: Stop the timer
+    _speedLimitTimer?.cancel();
     NotificationService().cancelNavigationNotification();
     _navigationStopwatch.stop();
     _navigationStopwatch.reset();
     setState(() {
       _isNavigating = false;
-      _navigationStarted = false; // TTS FIX: Reset flag
-      _currentSpeedLimit = null; // Clear speed limit from view
+      _navigationStarted = false;
+      _currentSpeedLimit = null;
     });
     _updateMarkersAndPolylines();
   }
@@ -1355,51 +1611,129 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     }
   }
 
+  double _calculateDistanceAlongPolyline(LatLng userLoc, String encodedPolyline) {
+    List<LatLng> polyline = PolylinePoints()
+        .decodePolyline(encodedPolyline)
+        .map((p) => LatLng(p.latitude, p.longitude))
+        .toList();
+
+    if (polyline.isEmpty) return 0.0;
+
+    int closestIndex = 0;
+    double minDistance = double.infinity;
+
+    for(int i=0; i<polyline.length; i++) {
+      double d = _calculateDistance(userLoc.latitude, userLoc.longitude, polyline[i].latitude, polyline[i].longitude);
+      if(d < minDistance) {
+        minDistance = d;
+        closestIndex = i;
+      }
+    }
+
+    double distanceRemaining = 0.0;
+    for(int i=closestIndex; i<polyline.length-1; i++) {
+      distanceRemaining += _calculateDistance(
+          polyline[i].latitude, polyline[i].longitude,
+          polyline[i+1].latitude, polyline[i+1].longitude
+      );
+    }
+    return distanceRemaining;
+  }
+
   void _listenToLocationForNavigation() {
     final locationService = Location();
     _navigationLocationSubscription =
         locationService.onLocationChanged.listen((LocationData currentLocation) {
           if (!mounted || !_isNavigating) return;
 
-          final newLatLng = LatLng(currentLocation.latitude!, currentLocation.longitude!);
+          final newLatLng =
+          LatLng(currentLocation.latitude!, currentLocation.longitude!);
           _lastLocation = newLatLng;
           final newRotation = currentLocation.heading ?? 0.0;
           _currentUserRotation = newRotation;
-          // REROUTE: Check if the user is off-route
-          if (!_isRecalculating && _isOffRoute(newLatLng, _routes[_selectedRouteIndex].polylinePoints)) {
-            _recalculateRoute(newLatLng);
-            return; // Skip the rest of the update while recalculating
+
+          // --- REROUTE LOGIC WITH BUFFER ---
+          if (!_isRecalculating) {
+            // Check distance using your polyline points
+            bool isCurrentlyOffRoute = _isOffRoute(
+                newLatLng, _routes[_selectedRouteIndex].polylinePoints);
+
+            if (isCurrentlyOffRoute) {
+              _offRouteStrikeCount++;
+              print("Off-route strike: $_offRouteStrikeCount"); // Debugging
+            } else {
+              _offRouteStrikeCount = 0; // Reset if we are back on track
+            }
+
+            // Only recalculate if we have enough strikes
+            if (_offRouteStrikeCount >= _requiredStrikesForReroute) {
+              print("Rerouting triggered!");
+              _offRouteStrikeCount = 0; // Reset counter
+              _recalculateRoute(newLatLng);
+              return; // Stop processing this update
+            }
           }
+
           _updateNavigationMarkers();
-          mapController.animateCamera(CameraUpdate.newCameraPosition(
-            CameraPosition(
-              target: newLatLng,
-              zoom: 18,
-              tilt: 50.0,
-              bearing: newRotation,
-            ),
-          ));
-          _updateNavigationState(newLatLng);
+
+          // Only animate camera if we are NOT recalculating to avoid jumping
+          if (!_isRecalculating) {
+            mapController.animateCamera(CameraUpdate.newCameraPosition(
+              CameraPosition(
+                target: newLatLng,
+                zoom: 18,
+                tilt: 50.0,
+                bearing: newRotation,
+              ),
+            ));
+            _updateNavigationState(newLatLng);
+          }
         });
   }
 
   Future<BitmapDescriptor> _createDynamicMarkerBitmap(double size) async {
     final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(pictureRecorder);
-    final Paint paint = Paint()..color = Colors.blue.shade700;
-    final Paint glowPaint = Paint()..color = Colors.blue.withOpacity(0.3);
 
-    // The outer "glow" circle
-    canvas.drawCircle(Offset(size / 2, size / 2), size / 2, glowPaint);
-    // The inner solid circle
-    canvas.drawCircle(Offset(size / 2, size / 2), size / 3.5, paint);
+    final double halfSize = size / 2;
+
+    // 1. Draw the "Glow" (Shadow)
+    final Paint glowPaint = Paint()
+      ..color = Colors.blue.withOpacity(0.4)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 15);
+
+    canvas.drawCircle(Offset(halfSize, halfSize), size / 3, glowPaint);
+
+    // 2. Draw the Arrow (Path)
+    final Paint arrowPaint = Paint()
+      ..color = Colors.blue.shade700
+      ..style = PaintingStyle.fill;
+
+    final Paint borderPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..strokeJoin = StrokeJoin.round;
+
+    final Path path = Path();
+    // Tip of the arrow (Top Center)
+    path.moveTo(halfSize, size * 0.1);
+    // Bottom Right
+    path.lineTo(size * 0.85, size * 0.85);
+    // Bottom Center (Indent to make it a chevron)
+    path.lineTo(halfSize, size * 0.7);
+    // Bottom Left
+    path.lineTo(size * 0.15, size * 0.85);
+    path.close();
+
+    canvas.drawPath(path, arrowPaint);
+    canvas.drawPath(path, borderPaint);
 
     final img = await pictureRecorder.endRecording().toImage(size.toInt(), size.toInt());
     final data = await img.toByteData(format: ui.ImageByteFormat.png);
     return BitmapDescriptor.fromBytes(data!.buffer.asUint8List());
   }
 
-  // REROUTE: New method to check if user is off-route
   bool _isOffRoute(LatLng userPosition, List<LatLng> polyline) {
     const double offRouteThreshold = 50.0; // meters
     double minDistance = double.infinity;
@@ -1415,7 +1749,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     return minDistance > offRouteThreshold;
   }
 
-// REROUTE: Helper for distance calculation
   double _distanceToLineSegment(LatLng p, LatLng v, LatLng w) {
     double l2 = _calculateDistance(v.latitude, v.longitude, w.latitude, w.longitude);
     l2 = l2 * l2;
@@ -1425,7 +1758,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     return _calculateDistance(p.latitude, p.longitude, v.latitude + t * (w.latitude - v.latitude), v.longitude + t * (w.longitude - v.longitude));
   }
 
-// REROUTE: New method to trigger recalculation
   Future<void> _recalculateRoute(LatLng newOrigin) async {
     if (!mounted) return;
     setState(() {
@@ -1444,18 +1776,12 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     if (_navSteps.isEmpty) return;
 
     final currentStep = _navSteps[_currentStepIndex];
-    final endLocation = LatLng(
-        currentStep['end_location']['lat'],
-        currentStep['end_location']['lng']
-    );
     final totalStepDistance = currentStep['distance']['value'].toDouble();
 
-
-    final distanceInMeters = _calculateDistance(
-        currentUserPosition.latitude,
-        currentUserPosition.longitude,
-        endLocation.latitude,
-        endLocation.longitude
+    // --- FIX: Use projected distance along path instead of air distance ---
+    final distanceInMeters = _calculateDistanceAlongPolyline(
+        currentUserPosition,
+        currentStep['polyline']['points']
     );
 
     if (distanceInMeters < 30 && _currentStepIndex < _navSteps.length - 1) {
@@ -1466,7 +1792,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     }
 
     final newProgress = (totalStepDistance - distanceInMeters) / totalStepDistance;
-    // ANIMATION: Animate the progress bar value
     _progressAnimation = Tween<double>(begin: _progressToNextManeuver, end: newProgress.clamp(0.0, 1.0))
         .animate(_progressAnimationController!);
     _progressAnimationController!.forward(from: 0.0);
@@ -1502,7 +1827,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       _navInstruction = instruction;
       _navManeuverIcon = _getManeuverIcon(currentStep['maneuver']);
     });
-    // TTS FIX: Only speak subsequent instructions
     if (_navigationStarted) {
       _speak(_navInstruction);
     }
@@ -1538,14 +1862,25 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     return 12742 * asin(sqrt(a)) * 1000;
   }
 
-  // FIX: Return a list of widgets instead of a Stack
   List<Widget> _buildNavigationUI() {
     return [
-      _buildTopInstructionCard(),
-      _buildBottomEtaCard(),
+      _buildFuturisticTopCard(),
+      _buildFuturisticBottomPanel(),
       _buildSpeedLimitIndicator(),
+
       Positioned(
-        bottom: 120,
+        bottom: 220, // Stacked above the Recenter button
+        right: 15,
+        child: FloatingActionButton(
+          heroTag: 'vehicle_select',
+          mini: true,
+          backgroundColor: Colors.white,
+          onPressed: _showVehicleSelector, // <--- Opens the menu
+          child: const Icon(Icons.directions_car, color: Colors.blue),
+        ),
+      ),
+      Positioned(
+        bottom: 150,
         right: 15,
         child: FloatingActionButton(
           mini: true,
@@ -1556,7 +1891,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     ];
   }
 
-  // SPEED LIMIT FEATURE: New widget to show the speed limit
   Widget _buildSpeedLimitIndicator() {
     if (_currentSpeedLimit == null) return const SizedBox.shrink();
 
@@ -1604,16 +1938,15 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         elevation: 4,
         child: Padding(
           padding: const EdgeInsets.all(16.0),
-          // UI ALIGNMENT FIX: Center the instruction content
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.center, // Center horizontally
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Icon(_navManeuverIcon, color: Colors.white, size: 48),
               const SizedBox(height: 8),
               Text(
                 _navInstruction,
-                textAlign: TextAlign.center, // Center text
+                textAlign: TextAlign.center,
                 style: const TextStyle(
                     color: Colors.white,
                     fontSize: 24,
@@ -1625,7 +1958,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                   Expanded(
                     child: ClipRRect(
                         borderRadius: BorderRadius.circular(8),
-                        // ANIMATION: Use AnimatedBuilder for smooth progress
                         child: AnimatedBuilder(
                           animation: _progressAnimationController!,
                           builder: (context, child) {
@@ -1755,7 +2087,7 @@ class _TransitStepWidget extends StatelessWidget {
                   child: Icon(
                     step.travelMode == StepTravelMode.walking
                         ? Icons.directions_walk
-                        : getTransitIcon(step.vehicleType), // <-- USES CLEANED-UP FUNCTION
+                        : getTransitIcon(step.vehicleType),
                     color: Colors.white,
                     size: 22,
                   ),
