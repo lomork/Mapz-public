@@ -264,13 +264,26 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     final newLatLng = LatLng(currentLocation.latitude!, currentLocation.longitude!);
     final newRotation = currentLocation.heading ?? _previousRotation;
 
-    if (_previousLatLng == null) {
+    bool isFirstLocationUpdate = _previousLatLng == null;
+
+    if (isFirstLocationUpdate) {
       setState(() {
         _currentUserLatLng = newLatLng;
         _currentUserRotation = newRotation;
         _previousLatLng = newLatLng;
         _previousRotation = newRotation;
       });
+
+      // --- FIX: FORCE CAMERA MOVE ON FIRST LOAD ---
+      if (_isMapControllerInitialized) {
+        mapController.animateCamera(CameraUpdate.newCameraPosition(
+          CameraPosition(
+              target: newLatLng,
+              zoom: 15.0, // Zoom in closer for the user
+              bearing: newRotation,
+              tilt: 0),
+        ));
+      }
       return;
     }
 

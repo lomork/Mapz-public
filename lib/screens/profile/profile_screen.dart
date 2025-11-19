@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:country_picker/country_picker.dart';
@@ -143,20 +144,24 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
         .doc(widget.user.uid)
         .get();
 
-    final percentageFuture =
-    discoveryService.calculateDiscoveryPercentage(_currentCountry!);
+    final localPercentageFuture = discoveryService.calculateDiscoveryPercentage(_currentCountry!);
+    final cloudPercentageFuture = discoveryService.getCloudDiscoveryPercentage(_currentCountry!);
     final rankingsFuture =
     leaderboardService.getNationalLeaderboard(_currentCountry!);
 
     final results = await Future.wait([
-      percentageFuture,
+      localPercentageFuture,
+      cloudPercentageFuture,
       rankingsFuture,
       userDocFuture,
     ]);
 
-    final percentage = results[0] as double;
+    final localPercentage = results[0] as double;
+    final cloudPercentage = results[1] as double;
     final rankings = results[1] as List<LeaderboardUser>;
     final userDoc = results[2] as DocumentSnapshot<Map<String, dynamic>>;
+
+    final percentage = max(localPercentage, cloudPercentage);
 
     int? rank;
     final userIndex = rankings.indexWhere((u) => u.name == widget.user.displayName);
