@@ -15,6 +15,8 @@ import '../../models/discovery/tier.dart';
 import '../../services/leaderboard_service.dart';
 import '../../services/road_discovery_service.dart';
 import '../auth/auth_gate.dart';
+import '../auth/login_screen.dart';
+import '../auth/sign_up_screen.dart';
 import '../../providers/settings_provider.dart';
 import '../profile/friends/friends_screen.dart';
 
@@ -593,14 +595,21 @@ class GuestProfileScreen extends StatelessWidget {
               const SizedBox(height: 24),
               ElevatedButton(
                 onPressed: () {
-                  // TODO: Navigate to EditProfileScreen to add email
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text("Edit Profile screen coming soon!"),
-                    ),
+                  // --- WIRED UP: Navigate to Sign Up ---
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const SignUpScreen()),
                   );
                 },
-                child: const Text("Add Email & Save Progress"),
+                child: const Text("Create Account"),
+              ),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  );
+                },
+                child: const Text("Already have an account? Log In"),
               ),
             ],
           ),

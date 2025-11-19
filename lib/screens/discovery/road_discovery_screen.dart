@@ -20,6 +20,8 @@ import '../../models/discovery/tier.dart';
 import '../../services/leaderboard_service.dart';
 import '../../services/road_discovery_service.dart';
 import '../../providers/settings_provider.dart';
+import '../auth/login_screen.dart';
+import '../auth/sign_up_screen.dart';
 
 class RoadDiscoveryScreen extends StatefulWidget {
   const RoadDiscoveryScreen({super.key});
@@ -41,6 +43,8 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
   double _currentUserRotation = 0.0;
   String? _currentCountry;
   String _selectedCountry = '';
+
+  bool _isGuestRestricted = false;
 
   GoogleMapController? _atlasMapController;
   StreamSubscription<LocationData>? _locationSubscription;
@@ -71,6 +75,39 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
         setState(() {});
       }
     });
+    _checkGuestStatus();
+  }
+
+  Future<void> _checkGuestStatus() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null && user.isAnonymous) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+
+        bool hasOffer = false;
+        if (doc.exists && doc.data() != null) {
+          hasOffer = doc.data()!['has_special_offer'] ?? false;
+        }
+
+        // If they don't have the offer, they are restricted
+        if (!hasOffer) {
+          if (mounted) {
+            setState(() {
+              _isGuestRestricted = true;
+              _isLoading = false; // Stop loading, show restriction
+            });
+          }
+          return; // Stop here, don't load discovery data
+        }
+      } catch (e) {
+        print("Error checking guest status: $e");
+      }
+    }
+
+    // If not restricted (or not guest), load data normally
     _loadDiscoveryData();
     _loadMapStyles();
     _loadMarkerIcon();
@@ -80,14 +117,12 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // We get the new country from the provider
-    final newCountry = context.watch<SettingsProvider>().selectedCountry;
+    if (_isGuestRestricted) return;
 
-    // --- THIS 'IF' STATEMENT IS THE FIX ---
-    // If the country has changed, reload the data
+    final newCountry = context.watch<SettingsProvider>().selectedCountry;
     if (_selectedCountry != newCountry) {
       _selectedCountry = newCountry;
-      _loadDiscoveryData(); // Reload all data for the new country
+      _loadDiscoveryData();
     }
   }
 
@@ -300,8 +335,14 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
     if (user?.isAnonymous ?? true) {
       return const GuestDiscoveryPromptScreen();
     }
-    if (_isLoading || _discoveryPercentage == null) {
+    if (_isGuestRestricted) {
+      return const LockedDiscoveryScreen();
+    }
+    if (_isLoading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (_discoveryPercentage == null) {
+      return const Scaffold(body: Center(child: Text("Error loading data.")));
     }
 
     return Scaffold(
@@ -954,6 +995,61 @@ class _PausedOverlayWrapper extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class LockedDiscoveryScreen extends StatelessWidget {
+  const LockedDiscoveryScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Road Discovery")),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.lock_outline, size: 80, color: Colors.grey),
+              const SizedBox(height: 24),
+              Text(
+                "Discovery Locked",
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                "Sign in to track your progress and compete with friends.",
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 32),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  OutlinedButton(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const LoginScreen()),
+                      );
+                    },
+                    child: const Text("LOGIN"),
+                  ),
+                  const SizedBox(width: 16),
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const SignUpScreen()),
+                      );
+                    },
+                    child: const Text("SIGN UP"),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
