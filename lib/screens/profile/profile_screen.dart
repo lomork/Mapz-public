@@ -166,8 +166,8 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
 
       final localPercentage = results[0] as double;
       final cloudPercentage = results[1] as double;
-      final rankings = results[1] as List<LeaderboardUser>;
-      final userDoc = results[2] as DocumentSnapshot<Map<String, dynamic>>;
+      final rankings = results[2] as List<LeaderboardUser>;
+      final userDoc = results[3] as DocumentSnapshot<Map<String, dynamic>>;
 
       final percentage = max(localPercentage, cloudPercentage);
 
