@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' show cos, sqrt, asin, atan2, sin, pi, min, max, pow;
 import 'dart:ui' as ui;
 
@@ -11,6 +12,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:location/location.dart';
 import 'package:provider/provider.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
@@ -169,6 +171,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   String _selectedVehicleAsset = 'arrow';
   String? _selectedVehicleModel;
 
+  final Map<String, String> _localModelPaths = {};
+
   final List<Map<String, String>> _availableVehicles = [
     {'id': 'arrow', 'name': 'Arrow', 'asset': '', 'model': ''},
     {
@@ -213,7 +217,36 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     _createStopIcons();
     _loadMutePreference();
     _initTts();
+    _prepare3DModels();
     themeNotifier.addListener(_updateMapStyle);
+  }
+
+  Future<void> _prepare3DModels() async {
+    for (var vehicle in _availableVehicles) {
+      final modelPath = vehicle['model'];
+      if (modelPath != null && modelPath.isNotEmpty) {
+        try {
+          final file = await _loadAssetToLocalFile(modelPath);
+          if (mounted) {
+            setState(() {
+              // Store with 'file://' prefix so ModelViewer accepts it as a URL with scheme
+              _localModelPaths[modelPath] = 'file://${file.path}';
+            });
+          }
+        } catch (e) {
+          debugPrint("Error preparing model $modelPath: $e");
+        }
+      }
+    }
+  }
+  Future<File> _loadAssetToLocalFile(String assetPath) async {
+    final byteData = await rootBundle.load(assetPath);
+    final tempDir = await getTemporaryDirectory();
+    // Use nested folder structure to avoid conflicts
+    final fileName = assetPath.split('/').last;
+    final file = File('${tempDir.path}/$fileName');
+    await file.writeAsBytes(byteData.buffer.asUint8List());
+    return file;
   }
 
   Future<void> _initTts() async {
@@ -769,6 +802,37 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     _updateMapStyle();
   }
 
+  List<Widget> _buildNavigationUI() {
+    return [
+      _buildFuturisticTopCard(),
+      _buildFuturisticBottomPanel(),
+      _buildSpeedLimitIndicator(),
+
+      // Vehicle Selector Button
+      Positioned(
+        bottom: 220,
+        right: 15,
+        child: FloatingActionButton(
+          heroTag: 'vehicle_select',
+          mini: true,
+          backgroundColor: Colors.white,
+          onPressed: _showVehicleSelector,
+          child: const Icon(Icons.directions_car, color: Colors.blue),
+        ),
+      ),
+
+      Positioned(
+        bottom: 150,
+        right: 15,
+        child: FloatingActionButton(
+          mini: true,
+          onPressed: _recenterCamera,
+          child: const Icon(Icons.my_location),
+        ),
+      )
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -807,18 +871,18 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                 child: SizedBox(
                   width: 200,
                   height: 200,
-                  child: ModelViewer(
+                  child: _localModelPaths.containsKey(_selectedVehicleModel)
+                      ? ModelViewer(
                     key: ValueKey(_selectedVehicleModel),
-                    src: _selectedVehicleModel!,
+                    src: _localModelPaths[_selectedVehicleModel]!,
                     alt: "3D Vehicle",
                     backgroundColor: Colors.transparent,
                     autoRotate: false,
                     cameraControls: false,
-                    // This locks the view to look at the back of the car
-                    // Adjust "180deg" if your model faces the wrong way
                     cameraOrbit: "180deg 75deg 3m",
                     disableZoom: true,
-                  ),
+                  )
+                      : const SizedBox(),
                 ),
               ),
             ),
@@ -849,29 +913,24 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     );
   }
 
-  List<Widget> _buildFuturisticNavigationUI() {
-    return [
-      _buildFuturisticTopCard(),
-      _buildFuturisticBottomPanel(),
-    ];
-  }
-
   Future<void> _updateNavigationMarkerIcon() async {
     final double newSize = 110 + (_currentZoom - 12) * 20;
     final double clampedSize = newSize.clamp(110.0, 300.0);
 
     if (_selectedVehicleAsset == '' || _selectedVehicleAsset == 'arrow') {
       _navigationMarkerIcon = await _createDynamicMarkerBitmap(clampedSize);
-      _show3DCar = false;
+      _show3DCar = false; // Disable 3D overlay
       _selectedVehicleModel = null;
     } else {
+      // We still create a marker (maybe invisible or fallback)
+      // But importantly we check if there's a model
       final vehicle = _availableVehicles.firstWhere((v) => v['asset'] == _selectedVehicleAsset, orElse: () => {});
 
       if (vehicle.containsKey('model') && vehicle['model']!.isNotEmpty) {
         _selectedVehicleModel = vehicle['model'];
         _show3DCar = true; // Enable 3D overlay
         // Use a transparent icon for the map marker since we show the 3D model
-        _navigationMarkerIcon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue); // Placeholder, ideally transparent
+        _navigationMarkerIcon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
       } else {
         _show3DCar = false;
         try {
@@ -897,10 +956,10 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      isScrollControlled: true, // <--- IMPORTANT: Allows taller sheet
+      isScrollControlled: true,
       builder: (context) => GlassmorphicContainer(
         child: Container(
-          height: 280, // <--- Increased height for 3D models
+          height: 280,
           padding: const EdgeInsets.all(16),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -918,18 +977,23 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                     final vehicle = _availableVehicles[index];
                     final bool isSelected = _selectedVehicleAsset == vehicle['asset'];
                     final bool isArrow = vehicle['id'] == 'arrow';
+                    final modelPath = vehicle['model'];
+
+                    // Use locally cached path if available
+                    final String? displaySrc = modelPath != null && _localModelPaths.containsKey(modelPath)
+                        ? _localModelPaths[modelPath]
+                        : null;
 
                     return GestureDetector(
                       onTap: () {
                         setState(() {
-                          // If empty asset, it means 'arrow'
                           _selectedVehicleAsset = vehicle['asset']!;
                         });
                         _updateNavigationMarkerIcon(); // Force refresh map marker
                         Navigator.pop(context);
                       },
                       child: Container(
-                        width: 160, // <--- Wider container for 3D view
+                        width: 160,
                         margin: const EdgeInsets.symmetric(horizontal: 12),
                         decoration: BoxDecoration(
                           color: isSelected ? Colors.blue.withOpacity(0.3) : Colors.white.withOpacity(0.1),
@@ -942,19 +1006,21 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                             Expanded(
                               child: isArrow
                                   ? const Icon(Icons.navigation, color: Colors.white, size: 60)
-                              // --- THIS IS THE CHANGE: Use ModelViewer for cars ---
-                                  : ClipRRect(
+                              // --- UPDATED: Use local file path ---
+                                  : (displaySrc != null
+                                  ? ClipRRect(
                                 borderRadius: BorderRadius.circular(16),
                                 child: ModelViewer(
-                                  key: ValueKey(vehicle['model']), // Key ensures it rebuilds correctly
-                                  src: vehicle['model']!, // Uses the .glb file path
+                                  key: ValueKey(displaySrc),
+                                  src: displaySrc, // 'file://...'
                                   alt: "3D Model of ${vehicle['name']}",
-                                  autoRotate: true, // Makes it spin!
-                                  cameraControls: false, // Disable touch (so tapping selects it)
+                                  autoRotate: true,
+                                  cameraControls: false,
                                   backgroundColor: Colors.transparent,
                                   disableZoom: true,
                                 ),
-                              ),
+                              )
+                                  : const Center(child: CircularProgressIndicator(strokeWidth: 2))), // Show loading if not ready
                             ),
                             const SizedBox(height: 8),
                             Text(
@@ -979,6 +1045,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       ),
     );
   }
+
   void _updateNavigationMarkers() {
     if (!mounted || _lastLocation == null || _navigationMarkerIcon == null) return;
 
@@ -1729,9 +1796,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           final newRotation = currentLocation.heading ?? 0.0;
           _currentUserRotation = newRotation;
 
-          // --- REROUTE LOGIC WITH BUFFER ---
           if (!_isRecalculating) {
-            // 1. Update Camera
             mapController.animateCamera(CameraUpdate.newCameraPosition(
               CameraPosition(
                 target: newLatLng,
@@ -1741,7 +1806,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
               ),
             ));
 
-            // 2. Update 3D Car Position (Sync with screen pixels)
             if (_show3DCar && _isMapControllerInitialized) {
               try {
                 ScreenCoordinate screenPos = await mapController.getScreenCoordinate(newLatLng);
@@ -1950,34 +2014,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     return 12742 * asin(sqrt(a)) * 1000;
   }
 
-  List<Widget> _buildNavigationUI() {
-    return [
-      _buildFuturisticTopCard(),
-      _buildFuturisticBottomPanel(),
-      _buildSpeedLimitIndicator(),
 
-      Positioned(
-        bottom: 220, // Stacked above the Recenter button
-        right: 15,
-        child: FloatingActionButton(
-          heroTag: 'vehicle_select',
-          mini: true,
-          backgroundColor: Colors.white,
-          onPressed: _showVehicleSelector, // <--- Opens the menu
-          child: const Icon(Icons.directions_car, color: Colors.blue),
-        ),
-      ),
-      Positioned(
-        bottom: 150,
-        right: 15,
-        child: FloatingActionButton(
-          mini: true,
-          onPressed: _recenterCamera,
-          child: const Icon(Icons.my_location),
-        ),
-      )
-    ];
-  }
 
   Widget _buildSpeedLimitIndicator() {
     if (_currentSpeedLimit == null) return const SizedBox.shrink();
