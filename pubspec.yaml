@@ -97,6 +97,7 @@ flutter:
     - assets/map_style_light.json
     - assets/animations/Login_Screen_Transition_Animation.mp4
     - .env
+    - assets/models/Textures/
 
 
 

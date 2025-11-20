@@ -222,6 +222,26 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   }
 
   Future<void> _prepare3DModels() async {
+    final tempDir = await getTemporaryDirectory();
+
+    // 1. Manually copy the texture file to tempDir/Textures/colormap.png
+    // This is required because the GLB expects the texture to be relative to itself.
+    try {
+      final textureDir = Directory('${tempDir.path}/Textures');
+      if (!await textureDir.exists()) {
+        await textureDir.create(recursive: true);
+      }
+
+      // Load the texture from assets
+      final textureData = await rootBundle.load('assets/models/Textures/colormap.png');
+      final textureFile = File('${textureDir.path}/colormap.png');
+      await textureFile.writeAsBytes(textureData.buffer.asUint8List());
+      debugPrint("Texture copied to: ${textureFile.path}");
+    } catch (e) {
+      debugPrint("Error copying texture: $e");
+    }
+
+    // 2. Copy the vehicle models
     for (var vehicle in _availableVehicles) {
       final modelPath = vehicle['model'];
       if (modelPath != null && modelPath.isNotEmpty) {
@@ -930,7 +950,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         _selectedVehicleModel = vehicle['model'];
         _show3DCar = true; // Enable 3D overlay
         // Use a transparent icon for the map marker since we show the 3D model
-        _navigationMarkerIcon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
+        _navigationMarkerIcon = await _createTransparentMarker();
       } else {
         _show3DCar = false;
         try {
@@ -942,6 +962,15 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     }
 
     _updateNavigationMarkers();
+  }
+
+  Future<BitmapDescriptor> _createTransparentMarker() async {
+    final ui.PictureRecorder recorder = ui.PictureRecorder();
+    final Canvas canvas = Canvas(recorder);
+    // Draw nothing (transparent)
+    final ui.Image image = await recorder.endRecording().toImage(1, 1);
+    final ByteData? data = await image.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.fromBytes(data!.buffer.asUint8List());
   }
 
   Future<BitmapDescriptor> _createImageMarkerBitmap(String assetPath, int width) async {
