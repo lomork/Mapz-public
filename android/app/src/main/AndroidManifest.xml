@@ -11,7 +11,9 @@
         android:label="Mapz"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        android:allowBackup="false"
+        android:fullBackupContent="false">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -42,7 +44,7 @@
             android:value="2" />
 
         <meta-data android:name="com.google.android.geo.API_KEY"
-            android:value="AIzaSyC4_M_lpJiSfISZAnw2cSy9JX3Pvnf06wY"/>
+            android:value="AIzaSyBVE3M48PFwze57lt-mCiXC5rTJlg72r3w"/>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

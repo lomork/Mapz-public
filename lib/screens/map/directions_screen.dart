@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+//import 'dart:io';
 import 'dart:math' show cos, sqrt, asin, atan2, sin, pi, min, max, pow;
 import 'dart:ui' as ui;
 
@@ -15,7 +15,6 @@ import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:model_viewer_plus/model_viewer_plus.dart';
 
 import '../../main.dart';
 import '../../api/google_maps_api_service.dart';
@@ -42,7 +41,7 @@ class RouteStep {
   final String duration;
   final StepTravelMode travelMode;
   final String? lineName;
-  final String? vehicleType; // e.g., 'BUS', 'SUBWAY'
+  final String? vehicleType;
   final List<LatLng> polylinePoints;
 
   RouteStep({
@@ -155,6 +154,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
   int _offRouteStrikeCount = 0;
   static const int _requiredStrikesForReroute = 3;
+  bool _isCameraLocked = true;
 
   String _getDirectionAbbreviation(String instruction) {
     final lower = instruction.toLowerCase();
@@ -168,42 +168,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     if (lower.contains('west')) return 'W';
     return '';
   }
-  String _selectedVehicleAsset = 'arrow';
-  String? _selectedVehicleModel;
-
-  final Map<String, String> _localModelPaths = {};
-
-  final List<Map<String, String>> _availableVehicles = [
-    {'id': 'arrow', 'name': 'Arrow', 'asset': '', 'model': ''},
-    {
-      'id': 'sedan',
-      'name': 'Sedan',
-      'asset': 'assets/images/car_sedan.png',
-      'model': 'assets/models/sedan-sports.glb'
-    },
-    {
-      'id': 'suv',
-      'name': 'SUV',
-      'asset': 'assets/images/car_taxi.png',
-      'model': 'assets/models/suv-luxury.glb'
-    },
-    {
-      'id': 'taxi',
-      'name': 'Taxi',
-      'asset': 'assets/images/car_taxi.png',
-      'model': 'assets/models/taxi.glb'
-    },
-    {
-      'id': 'truck',
-      'name': 'Truck',
-      'asset': 'assets/images/car_truck.png',
-      'model': 'assets/models/truck.glb'
-    },
-  ];
-
-  double _carScreenX = 0;
-  double _carScreenY = 0;
-  bool _show3DCar = false;
 
   @override
   void initState() {
@@ -213,45 +177,16 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       duration: const Duration(milliseconds: 500),
       vsync: this,
     );
+
     _initializeDirections();
     _createStopIcons();
     _loadMutePreference();
     _initTts();
-    _prepare3DModels();
     themeNotifier.addListener(_updateMapStyle);
-  }
-
-  Future<void> _prepare3DModels() async {
-    for (var vehicle in _availableVehicles) {
-      final modelPath = vehicle['model'];
-      if (modelPath != null && modelPath.isNotEmpty) {
-        try {
-          final file = await _loadAssetToLocalFile(modelPath);
-          if (mounted) {
-            setState(() {
-              // Store with 'file://' prefix so ModelViewer accepts it as a URL with scheme
-              _localModelPaths[modelPath] = 'file://${file.path}';
-            });
-          }
-        } catch (e) {
-          debugPrint("Error preparing model $modelPath: $e");
-        }
-      }
-    }
-  }
-  Future<File> _loadAssetToLocalFile(String assetPath) async {
-    final byteData = await rootBundle.load(assetPath);
-    final tempDir = await getTemporaryDirectory();
-    // Use nested folder structure to avoid conflicts
-    final fileName = assetPath.split('/').last;
-    final file = File('${tempDir.path}/$fileName');
-    await file.writeAsBytes(byteData.buffer.asUint8List());
-    return file;
   }
 
   Future<void> _initTts() async {
     _flutterTts = FlutterTts();
-    // Use the dynamic voice logic from MapScreen if possible
     final prefs = await SharedPreferences.getInstance();
     final voiceName = prefs.getString('selectedTtsVoice');
     if (voiceName != null) {
@@ -412,7 +347,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       );
 
       if (data['status'] == 'OK') {
-        // --- 1. Process Driving/Walking/Cycling Routes ---
         final List<RouteInfo> fetchedRoutes = [];
         for (var route in data['routes']) {
           final leg = route['legs'][0];
@@ -433,7 +367,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           ));
         }
 
-        // --- 2. FIX: Process Transit Routes Correctly ---
         if (_travelMode == TravelMode.transit) {
           final List<FullTransitRoute> parsedTransitRoutes = [];
           for (var route in data['routes']) {
@@ -482,11 +415,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           setState(() {
             _routes = fetchedRoutes;
             _processRoutes();
-            // Don't clear transit routes here, we just set them above if needed
             if (_travelMode != TravelMode.transit) {
               _transitRoutes = [];
             }
-
             _detailedRoute = null;
 
             if (_routes.isNotEmpty) {
@@ -505,7 +436,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           });
         }
       }
-
       _updateMarkersAndPolylines();
     } catch (e) {
       debugPrint("Error fetching directions: $e");
@@ -797,8 +727,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   void _onMapCreated(GoogleMapController controller) {
     mapController = controller;
     _isMapControllerInitialized = true;
-    final isDarkMode = MediaQuery.of(context).platformBrightness == Brightness.dark;
-    // --- CHANGED: Conditionally load the dark style or pass null for default light style ---
     _updateMapStyle();
   }
 
@@ -807,19 +735,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       _buildFuturisticTopCard(),
       _buildFuturisticBottomPanel(),
       _buildSpeedLimitIndicator(),
-
-      // Vehicle Selector Button
-      Positioned(
-        bottom: 220,
-        right: 15,
-        child: FloatingActionButton(
-          heroTag: 'vehicle_select',
-          mini: true,
-          backgroundColor: Colors.white,
-          onPressed: _showVehicleSelector,
-          child: const Icon(Icons.directions_car, color: Colors.blue),
-        ),
-      ),
 
       Positioned(
         bottom: 150,
@@ -831,6 +746,19 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         ),
       )
     ];
+  }
+
+  Set<Marker> _buildMarkers() {
+    if (!_isNavigating) {
+      return _markers.union(_routeDifferenceMarkers);
+    }
+
+    Set<Marker> displayMarkers = Set.from(_routeDifferenceMarkers);
+
+    displayMarkers.addAll(_markers.where((m) => m.markerId.value != 'origin'));
+    displayMarkers.addAll(_navigationMarkers);
+
+    return displayMarkers;
   }
 
   @override
@@ -849,11 +777,14 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
               _updateNavigationMarkerIcon();
             },
             polylines: _polylines,
-            markers: (_isNavigating && _show3DCar)
-                ? _markers.union(_routeDifferenceMarkers).difference(_navigationMarkers) // Hide nav marker
-                : (_isNavigating
-                ? _navigationMarkers.union(_routeDifferenceMarkers)
-                : _markers.union(_routeDifferenceMarkers)),
+            markers: _buildMarkers(),
+            onCameraMoveStarted: () {
+              if (_isCameraLocked) {
+                setState(() {
+                  _isCameraLocked = false;
+                });
+              }
+            },
             zoomControlsEnabled: false,
             myLocationEnabled: false,
             myLocationButtonEnabled: false,
@@ -862,30 +793,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                 bottom: _isNavigating ? 100 : MediaQuery.of(context).size.height * 0.2
             ),
           ),
-
-          if (_isNavigating && _show3DCar && _selectedVehicleModel != null && _selectedVehicleModel!.isNotEmpty)
-            Positioned(
-              left: _carScreenX - 100, // Offset by half size (200/2)
-              top: _carScreenY - 100,
-              child: IgnorePointer(
-                child: SizedBox(
-                  width: 200,
-                  height: 200,
-                  child: _localModelPaths.containsKey(_selectedVehicleModel)
-                      ? ModelViewer(
-                    key: ValueKey(_selectedVehicleModel),
-                    src: _localModelPaths[_selectedVehicleModel]!,
-                    alt: "3D Vehicle",
-                    backgroundColor: Colors.transparent,
-                    autoRotate: false,
-                    cameraControls: false,
-                    cameraOrbit: "180deg 75deg 3m",
-                    disableZoom: true,
-                  )
-                      : const SizedBox(),
-                ),
-              ),
-            ),
           if (_isRecalculating)
             Container(
               color: Colors.black.withOpacity(0.5),
@@ -917,141 +824,23 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     final double newSize = 110 + (_currentZoom - 12) * 20;
     final double clampedSize = newSize.clamp(110.0, 300.0);
 
-    if (_selectedVehicleAsset == '' || _selectedVehicleAsset == 'arrow') {
-      _navigationMarkerIcon = await _createDynamicMarkerBitmap(clampedSize);
-      _show3DCar = false; // Disable 3D overlay
-      _selectedVehicleModel = null;
-    } else {
-      // We still create a marker (maybe invisible or fallback)
-      // But importantly we check if there's a model
-      final vehicle = _availableVehicles.firstWhere((v) => v['asset'] == _selectedVehicleAsset, orElse: () => {});
-
-      if (vehicle.containsKey('model') && vehicle['model']!.isNotEmpty) {
-        _selectedVehicleModel = vehicle['model'];
-        _show3DCar = true; // Enable 3D overlay
-        // Use a transparent icon for the map marker since we show the 3D model
-        _navigationMarkerIcon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
-      } else {
-        _show3DCar = false;
-        try {
-          _navigationMarkerIcon = await _createImageMarkerBitmap(_selectedVehicleAsset, clampedSize.toInt());
-        } catch (e) {
-          _navigationMarkerIcon = await _createDynamicMarkerBitmap(clampedSize);
-        }
-      }
-    }
-
+    // Always use the dynamic arrow bitmap
+    _navigationMarkerIcon = await _createDynamicMarkerBitmap(clampedSize);
     _updateNavigationMarkers();
   }
 
-  Future<BitmapDescriptor> _createImageMarkerBitmap(String assetPath, int width) async {
-    ByteData data = await rootBundle.load(assetPath);
-    ui.Codec codec = await ui.instantiateImageCodec(data.buffer.asUint8List(), targetWidth: width);
-    ui.FrameInfo fi = await codec.getNextFrame();
-    final Uint8List resizedBytes = (await fi.image.toByteData(format: ui.ImageByteFormat.png))!.buffer.asUint8List();
-    return BitmapDescriptor.fromBytes(resizedBytes);
-  }
-
-  void _showVehicleSelector() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) => GlassmorphicContainer(
-        child: Container(
-          height: 280,
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                "Choose Your Ride",
-                style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 20),
-              Expanded(
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: _availableVehicles.length,
-                  itemBuilder: (context, index) {
-                    final vehicle = _availableVehicles[index];
-                    final bool isSelected = _selectedVehicleAsset == vehicle['asset'];
-                    final bool isArrow = vehicle['id'] == 'arrow';
-                    final modelPath = vehicle['model'];
-
-                    // Use locally cached path if available
-                    final String? displaySrc = modelPath != null && _localModelPaths.containsKey(modelPath)
-                        ? _localModelPaths[modelPath]
-                        : null;
-
-                    return GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _selectedVehicleAsset = vehicle['asset']!;
-                        });
-                        _updateNavigationMarkerIcon(); // Force refresh map marker
-                        Navigator.pop(context);
-                      },
-                      child: Container(
-                        width: 160,
-                        margin: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          color: isSelected ? Colors.blue.withOpacity(0.3) : Colors.white.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(20),
-                          border: isSelected ? Border.all(color: Colors.blueAccent, width: 2) : null,
-                        ),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Expanded(
-                              child: isArrow
-                                  ? const Icon(Icons.navigation, color: Colors.white, size: 60)
-                              // --- UPDATED: Use local file path ---
-                                  : (displaySrc != null
-                                  ? ClipRRect(
-                                borderRadius: BorderRadius.circular(16),
-                                child: ModelViewer(
-                                  key: ValueKey(displaySrc),
-                                  src: displaySrc, // 'file://...'
-                                  alt: "3D Model of ${vehicle['name']}",
-                                  autoRotate: true,
-                                  cameraControls: false,
-                                  backgroundColor: Colors.transparent,
-                                  disableZoom: true,
-                                ),
-                              )
-                                  : const Center(child: CircularProgressIndicator(strokeWidth: 2))), // Show loading if not ready
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              vehicle['name']!,
-                              style: TextStyle(
-                                color: isSelected ? Colors.blueAccent : Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  Future<BitmapDescriptor> _createTransparentMarker() async {
+    final ui.PictureRecorder recorder = ui.PictureRecorder();
+    final Canvas canvas = Canvas(recorder);
+    final ui.Image image = await recorder.endRecording().toImage(1, 1);
+    final ByteData? data = await image.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.fromBytes(data!.buffer.asUint8List());
   }
 
   void _updateNavigationMarkers() {
     if (!mounted || _lastLocation == null || _navigationMarkerIcon == null) return;
 
-    final Offset anchor = (_selectedVehicleAsset == '' || _selectedVehicleAsset == 'arrow')
-        ? const Offset(0.5, 0.5)
-        : const Offset(0.5, 0.70);
+    final Offset anchor = const Offset(0.5, 0.5);
 
     final marker = Marker(
       markerId: const MarkerId('navigation_user'),
@@ -1061,7 +850,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       anchor: anchor,
       flat: true,
       zIndex: 2.0,
-      onTap: _showVehicleSelector,
     );
 
     setState(() {
@@ -1071,7 +859,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   }
 
   Widget _buildFuturisticTopCard() {
-    // Determine if we are in dark mode for contrast
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final String directionAbbr = _getDirectionAbbreviation(_navInstruction);
 
@@ -1101,13 +888,12 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                           size: 42
                       ),
                     ),
-                    // Only show text if we found a direction
                     if (directionAbbr.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Text(
                         directionAbbr,
                         style: const TextStyle(
-                          color: Colors.amber, // Distinct color for direction
+                          color: Colors.amber,
                           fontWeight: FontWeight.w900,
                           fontSize: 16,
                         ),
@@ -1116,26 +902,23 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                   ],
                 ),
                 const SizedBox(width: 16),
-
-                // 2. The Detail (Text) - Left Aligned
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         _navInstruction,
-                        textAlign: TextAlign.left, // Left align text
+                        textAlign: TextAlign.left,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 22, // Slightly smaller to fit better
+                          fontSize: 22,
                           fontWeight: FontWeight.bold,
                           height: 1.2,
                         ),
                       ),
                       const SizedBox(height: 4),
-                      // Distance moved here for better grouping
                       Text(
                           _distanceToNextManeuver,
                           style: TextStyle(
@@ -1150,8 +933,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
               ],
             ),
             const SizedBox(height: 16),
-
-            // 3. Progress Bar
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: AnimatedBuilder(
@@ -1183,7 +964,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // 1. Info Card (Glass)
           Expanded(
             child: GlassmorphicContainer(
               child: Row(
@@ -1211,7 +991,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                       ),
                     ],
                   ),
-                  // Mute Button tucked inside the info card
                   IconButton(
                     icon: Icon(_isMuted ? Icons.volume_off : Icons.volume_up, color: Colors.white),
                     onPressed: () {
@@ -1226,12 +1005,10 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
           const SizedBox(width: 12),
 
-          // 2. BIG RED EXIT BUTTON (Safety Feature)
-          // Separated from the rest so it's distinct and easy to hit
           GestureDetector(
             onTap: _stopNavigation,
             child: Container(
-              height: 64, // Match height of glass container roughly
+              height: 64,
               padding: const EdgeInsets.symmetric(horizontal: 20),
               decoration: BoxDecoration(
                   color: Colors.red.shade600,
@@ -1258,7 +1035,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     );
   }
 
-  // --- NEW: Rectangular Transit Route Box with Pills ---
   Widget _buildTransitRouteOption(int index) {
     final route = _transitRoutes[index];
     final isSelected = _selectedRouteIndex == index;
@@ -1279,7 +1055,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 1. ETA / Duration
             Text(
               route.duration,
               style: const TextStyle(
@@ -1288,7 +1063,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
               ),
             ),
             const SizedBox(height: 12),
-            // 2. Steps Pills
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -1296,7 +1070,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                   return Row(
                     children: [
                       _buildStepPill(step),
-                      // Arrow separator if not last
                       if (step != route.steps.last)
                         const Padding(
                           padding: EdgeInsets.symmetric(horizontal: 8.0),
@@ -1317,11 +1090,10 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     if (step.travelMode == StepTravelMode.walking) {
       return const Icon(Icons.directions_walk, size: 32, color: Colors.grey);
     } else {
-      // Transit pill
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: Colors.blue.shade50, // Light blue bg
+          color: Colors.blue.shade50,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: Colors.blue.shade200),
         ),
@@ -1352,7 +1124,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     return ListView.separated(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.only(bottom: 16), // Bottom padding for list
+      padding: const EdgeInsets.only(bottom: 16),
       itemCount: _transitRoutes.length,
       separatorBuilder: (ctx, i) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
@@ -1461,7 +1233,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     }
 
     return SingleChildScrollView(
-      // --- UPDATED: Reduced top padding to remove empty space ---
       padding: const EdgeInsets.fromLTRB(0, 8, 0, 16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1471,12 +1242,11 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
             child: Container(
                 width: 40,
                 height: 5,
-                margin: const EdgeInsets.only(bottom: 8), // Reduced margin
+                margin: const EdgeInsets.only(bottom: 8),
                 decoration: BoxDecoration(
                     color: Colors.grey[400],
                     borderRadius: BorderRadius.circular(12))),
           ),
-          // Removed the SizedBox(height: 16) that was here
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child: Text(
@@ -1743,13 +1513,17 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   }
 
   void _recenterCamera() {
+    setState(() {
+      _isCameraLocked = true; // Lock the camera again
+    });
+
     if (_lastLocation != null && _isMapControllerInitialized) {
       mapController.animateCamera(CameraUpdate.newCameraPosition(
         CameraPosition(
           target: _lastLocation!,
           zoom: 18,
           tilt: 50.0,
-          bearing: 0.0,
+          bearing: _currentUserRotation,
         ),
       ));
     }
@@ -1796,7 +1570,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           final newRotation = currentLocation.heading ?? 0.0;
           _currentUserRotation = newRotation;
 
-          if (!_isRecalculating) {
+          if (_isCameraLocked && !_isRecalculating) {
             mapController.animateCamera(CameraUpdate.newCameraPosition(
               CameraPosition(
                 target: newLatLng,
@@ -1805,20 +1579,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                 bearing: newRotation,
               ),
             ));
+          }
 
-            if (_show3DCar && _isMapControllerInitialized) {
-              try {
-                ScreenCoordinate screenPos = await mapController.getScreenCoordinate(newLatLng);
-                setState(() {
-                  _carScreenX = screenPos.x.toDouble();
-                  _carScreenY = screenPos.y.toDouble();
-                });
-              } catch(e) {
-                print("Error syncing 3D car: $e");
-              }
-            }
-
-            // 3. Reroute Logic
+          if (!_isRecalculating) {
             bool isCurrentlyOffRoute = _isOffRoute(
                 newLatLng, _routes[_selectedRouteIndex].polylinePoints);
             if (isCurrentlyOffRoute) {
@@ -1833,10 +1596,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
               return;
             }
           }
-
           _updateNavigationMarkers();
 
-          // Only animate camera if we are NOT recalculating to avoid jumping
           if (!_isRecalculating) {
             _updateNavigationState(newLatLng);
           }

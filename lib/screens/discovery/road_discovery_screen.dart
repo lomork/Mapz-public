@@ -12,6 +12,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:permission_handler/permission_handler.dart' as ph;
 import '../../providers/fake_location_provider.dart';
 
 import '../../models/discovery/achievement.dart';
@@ -31,7 +32,7 @@ class RoadDiscoveryScreen extends StatefulWidget {
 }
 
 class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
-    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin{
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin, WidgetsBindingObserver{
   // --- State Variables ---
   double? _discoveryPercentage;
   Tier? _userTier;
@@ -45,6 +46,7 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
   String _selectedCountry = '';
 
   bool _isGuestRestricted = false;
+  bool _hasBackgroundPermission = false;
 
   GoogleMapController? _atlasMapController;
   StreamSubscription<LocationData>? _locationSubscription;
@@ -69,6 +71,7 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 3, vsync: this);
     _tabController.addListener(() {
       if (mounted) {
@@ -107,27 +110,17 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
       }
     }
 
-    // If not restricted (or not guest), load data normally
-    _loadDiscoveryData();
-    _loadMapStyles();
-    _loadMarkerIcon();
-    _initAtlasLocation();
-  }
+    _checkBackgroundLocationPermission();
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_isGuestRestricted) return;
-
-    final newCountry = context.watch<SettingsProvider>().selectedCountry;
-    if (_selectedCountry != newCountry) {
-      _selectedCountry = newCountry;
-      _loadDiscoveryData();
-    }
+    //_loadDiscoveryData();
+    //_loadMapStyles();
+    //_loadMarkerIcon();
+    //_initAtlasLocation();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _tabController.dispose();
     _locationSubscription?.cancel();
     _atlasMapController?.dispose();
@@ -139,11 +132,62 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
     super.dispose();
   }
 
-  // REPLACE your old _loadDiscoveryData function with this one
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_isGuestRestricted || !_hasBackgroundPermission) return;
+
+    final newCountry = context.watch<SettingsProvider>().selectedCountry;
+    if (_selectedCountry != newCountry) {
+      _selectedCountry = newCountry;
+      _loadDiscoveryData();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // User came back to app, re-check permissions
+      if (!_isGuestRestricted) {
+        _checkBackgroundLocationPermission();
+      }
+    }
+  }
+
+  Future<void> _checkBackgroundLocationPermission() async {
+    // Check if 'Location Always' is granted
+    var status = await ph.Permission.locationAlways.status;
+
+    // Note: On Android 10/11+, sometimes you have to request 'locationWhenInUse' first,
+    // then 'locationAlways'. For simplicity, we check specific status here.
+
+    bool isGranted = status.isGranted;
+
+    if (mounted) {
+      setState(() {
+        _hasBackgroundPermission = isGranted;
+      });
+    }
+
+    if (isGranted) {
+      // Permission good? Load data.
+      _loadDiscoveryData();
+      _loadMapStyles();
+      _loadMarkerIcon();
+      _initAtlasLocation();
+    } else {
+      // Permission bad? Stop loading so we can show the prompt
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
 
   Future<void> _loadDiscoveryData() async {
     if (!mounted) return;
     setState(() => _isLoading = true);
+
+    try {
 
     // Get services and country from providers
     final discoveryService = context.read<RoadDiscoveryService>();
@@ -213,31 +257,45 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
       setState(() {
         _discoveryPercentage = finalPercentage;
         _userTier = currentTier;
-        _nationalRankings = rankings; // <-- Set the list
-        _rivalsRankings = rivals;   // <-- Set the list
-        _sharingRankings = sharers; // <-- Set the list
+        _nationalRankings = rankings;
+        _rivalsRankings = rivals;
+        _sharingRankings = sharers;
         _isLoading = false;
       });
     }
     _listenToFriendLocations();
 
-    // 8. (Separately) Try to sync the local value up
     await discoveryService.updateCloudPercentage(localPercentage, country);
+    } catch (e) {
+      print("Error loading discovery data: $e");
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Failed to load data. Please reinstall app if issue persists.")),
+        );
+      }
+    }
+    finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   void _listenToFriendLocations() {
-    // Clear out any old listeners
     for (var stream in _friendLocationStreams) {
       stream.cancel();
     }
     _friendLocationStreams.clear();
     _friendMarkers.clear();
 
-    // Get the photo for the current user to add to the map
     final currentUser = _auth.currentUser;
     String myPhotoUrl = currentUser?.photoURL ?? '';
 
-    // Loop through each friend and create a listener
     for (final friend in _sharingRankings) {
       final stream = _db
           .collection('users')
@@ -248,8 +306,6 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
       });
       _friendLocationStreams.add(stream);
     }
-
-    // Also listen to *my own* location to show on the friend map
     if (currentUser != null) {
       final myStream = _db
           .collection('users')
@@ -262,7 +318,6 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
     }
   }
 
-  // --- NEW: Callback for when a friend's location changes ---
   Future<void> _updateFriendMarker(DocumentSnapshot doc, String myPhotoUrl, {bool isCurrentUser = false}) async {
     if (!doc.exists || doc.data() == null) return;
 
@@ -270,7 +325,6 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
     final geoPoint = data['live_location'] as GeoPoint?;
     final lastUpdated = data['location_last_updated'] as Timestamp?;
 
-    // If no location or location is old, remove marker and return
     if (geoPoint == null || lastUpdated == null || DateTime.now().difference(lastUpdated.toDate()).inMinutes > 30) {
       if (mounted) {
         setState(() {
@@ -284,7 +338,6 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
     final String name = data['displayName'] ?? 'Friend';
     final String photoUrl = isCurrentUser ? myPhotoUrl : (data['photoURL'] ?? '');
 
-    // Create a custom marker with their profile picture
     final BitmapDescriptor icon = await _createCustomMarkerBitmap(
       photoUrl,
       name,
@@ -295,7 +348,7 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
       markerId: MarkerId(doc.id),
       position: latLng,
       icon: icon,
-      anchor: const Offset(0.5, 0.5), // Center the icon
+      anchor: const Offset(0.5, 0.5),
       infoWindow: InfoWindow(
         title: name,
         snippet: 'Last seen: ${lastUpdated.toDate().toLocal()}',
@@ -310,17 +363,9 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
     }
   }
 
-  // --- NEW: Helper to create a custom marker from a URL ---
   Future<BitmapDescriptor> _createCustomMarkerBitmap(String? imageUrl, String name, {bool isCurrentUser = false}) async {
-    // ... (This is a complex canvas operation, simplified for now)
-    // In a real app, you'd load the image, draw it on a canvas, and add a border
-    // For now, let's use a colored pin
-
     final double hue = isCurrentUser ? BitmapDescriptor.hueAzure : BitmapDescriptor.hueGreen;
-
     return BitmapDescriptor.defaultMarkerWithHue(hue);
-
-    // TODO: Implement a real custom marker painter if you want profile pics
   }
 
   @override
@@ -337,6 +382,9 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
     }
     if (_isGuestRestricted) {
       return const LockedDiscoveryScreen();
+    }
+    if (!_hasBackgroundPermission) {
+      return const BackgroundLocationLockedScreen();
     }
     if (_isLoading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -430,25 +478,22 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
       case 1: // RIVALS
         return _buildSliverList(_rivalsRankings, "No Rivals Found", "Users in your tier will appear here once they join.", Icons.people_outline);
       case 2: // SHARING
-      // If paused, show the overlay
         if (isPaused) {
           return SliverToBoxAdapter(
             child: _PausedOverlayWrapper(
               isPaused: true,
-              child: Container(height: 400), // Placeholder height
+              child: Container(height: 400),
             ),
           );
         }
-        // If no friends, show empty state
         if (_sharingRankings.isEmpty) {
           return SliverToBoxAdapter(
             child: _buildEmptyState("Add Friends to Share", "Go to your profile to add friends. Their location will appear here if they are sharing.", Icons.person_add_alt_1),
           );
         }
-        // Otherwise, show the map
         return SliverToBoxAdapter(
           child: SizedBox(
-            height: 400, // Define a height for the map
+            height: 400,
             child: _buildSharingMap(),
           ),
         );
@@ -457,7 +502,6 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
     }
   }
 
-  // --- NEW: Extracted the SliverList builder ---
   Widget _buildSliverList(List<LeaderboardUser> list, String emptyTitle, String emptyMessage, IconData emptyIcon) {
     if (list.isEmpty) {
       return SliverToBoxAdapter(
@@ -491,7 +535,6 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
     );
   }
 
-  // --- NEW: The map for the "SHARING" tab ---
   Widget _buildSharingMap() {
     return GoogleMap(
       onMapCreated: (controller) {
@@ -502,7 +545,7 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
         );
       },
       initialCameraPosition: CameraPosition(
-        target: _currentUserLocation ?? const LatLng(44.6488, -63.5752), // Center on user or default
+        target: _currentUserLocation ?? const LatLng(44.6488, -63.5752),
         zoom: 12,
       ),
       markers: _friendMarkers,
@@ -536,8 +579,6 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
       ),
     );
   }
-
-  // --- BUILDER METHODS ---
 
   Widget _buildRankCard() {
     return Card(
@@ -706,27 +747,13 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
 
   void _initAtlasLocation() async {
     final locationService = Location();
-    bool serviceEnabled = await locationService.serviceEnabled();
-    if (!serviceEnabled) {
-      serviceEnabled = await locationService.requestService();
-      if (!serviceEnabled) return;
-    }
-
-    PermissionStatus permissionGranted = await locationService.hasPermission();
-    if (permissionGranted == PermissionStatus.denied) {
-      permissionGranted = await locationService.requestPermission();
-      if (permissionGranted != PermissionStatus.granted) return;
-    }
-
-    // Get the first location to initially center the map
+    // Note: We check granular permission in _checkBackgroundLocationPermission now,
+    // but this ensures the map service logic is still ready.
     try {
       final initialLocation = await locationService.getLocation();
       if (mounted) {
         setState(() {
-          _currentUserLocation = LatLng(
-            initialLocation.latitude!,
-            initialLocation.longitude!,
-          );
+          _currentUserLocation = LatLng(initialLocation.latitude!, initialLocation.longitude!);
           _recenterAtlas();
         });
       }
@@ -734,15 +761,9 @@ class _RoadDiscoveryScreenState extends State<RoadDiscoveryScreen>
       debugPrint("Could not get initial location: $e");
     }
 
-    // Start listening for subsequent location changes
-    _locationSubscription = locationService.onLocationChanged.listen((
-        locationData,
-        ) {
+    _locationSubscription = locationService.onLocationChanged.listen((locationData) {
       if (mounted && locationData.latitude != null && locationData.longitude != null) {
-        _currentUserLocation = LatLng(
-          locationData.latitude!,
-          locationData.longitude!,
-        );
+        _currentUserLocation = LatLng(locationData.latitude!, locationData.longitude!);
         _currentUserRotation = locationData.heading ?? _currentUserRotation;
         _updateUserMarker();
       }
@@ -1050,6 +1071,106 @@ class LockedDiscoveryScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class BackgroundLocationLockedScreen extends StatelessWidget {
+  const BackgroundLocationLockedScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Road Discovery")),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Icon
+            const Icon(Icons.location_on_outlined, size: 80, color: Colors.amber),
+            const SizedBox(height: 24),
+
+            // Title
+            Text(
+              "Enable Background Location",
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+
+            // Description
+            const Text(
+              "To unlock Road Discovery, this app needs location access set to 'Allow all the time'.",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, color: Colors.grey),
+            ),
+            const SizedBox(height: 32),
+
+            // Highlights List
+            _buildHighlightItem(context, Icons.auto_graph, "Automatic Tracking", "Capture every road you discover, even when the app is closed."),
+            const SizedBox(height: 16),
+            _buildHighlightItem(context, Icons.leaderboard, "Climb the Ranks", "Don't miss a single point. Compete on the National Leaderboard."),
+            const SizedBox(height: 16),
+            _buildHighlightItem(context, Icons.map_outlined, "Build Your Atlas", "Generate a complete heatmap of your travel history."),
+
+            const Spacer(),
+
+            // Call to Action
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Theme.of(context).primaryColor,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () {
+                  // Link straight to settings
+                  ph.openAppSettings();
+                },
+                child: const Text("Change Settings", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: () {
+                // Optional: Allow them to re-check if they think they changed it
+                ph.openAppSettings();
+              },
+              child: const Text("I've updated it, let me in!"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHighlightItem(BuildContext context, IconData icon, String title, String subtitle) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).primaryColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: Theme.of(context).primaryColor),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              Text(subtitle, style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

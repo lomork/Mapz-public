@@ -32,6 +32,7 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+/android/app/build
 
 # Symbolication related
 app.*.symbols
@@ -44,4 +45,7 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-.env"*.hprof" 
+.env"*.hprof"
+# Ignore Heap dumps
+*.hprof
+*.txt

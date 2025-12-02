@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:location/location.dart';
 import 'package:mapz/screens/discovery/road_discovery_screen.dart';
 import 'package:mapz/screens/map/map_screen.dart';
 
@@ -22,22 +23,13 @@ class _MainScreenState extends State<MainScreen> {
   late PageController _pageController;
   int _currentIndex = 0;
   late final List<Widget> _screens;
+  bool _isPermissionChecked = false;
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _currentIndex);
-    _screens = [
-      MapScreen(user: widget.user),
-      const RoadDiscoveryScreen(),
-      const ProfileScreen(),
-    ];
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final settings = context.read<SettingsProvider>();
-      if (settings.isDiscoveryOn) {
-        context.read<RoadDiscoveryService>().startDiscovery();
-      }
-    });
+    _initAppPermissions();
   }
 
   @override
@@ -47,12 +39,9 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _onTabTapped(int index) {
-    // --- CHANGED: Update the state here for instant feedback on tap ---
     setState(() {
       _currentIndex = index;
     });
-
-    // This part remains the same and handles the animation
     _pageController.animateToPage(
       index,
       duration: const Duration(milliseconds: 400),
@@ -62,6 +51,11 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_isPermissionChecked || _screens == null) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
     return Scaffold(
       body: Stack(
         children: [
@@ -85,5 +79,38 @@ class _MainScreenState extends State<MainScreen> {
         ],
       ),
     );
+  }
+  Future<void> _initAppPermissions() async {
+    final location = Location();
+
+    // 1. Check/Request Service
+    bool serviceEnabled = await location.serviceEnabled();
+    if (!serviceEnabled) {
+      serviceEnabled = await location.requestService();
+    }
+
+    // 2. Check/Request Permission (Only ask once here!)
+    PermissionStatus permissionGranted = await location.hasPermission();
+    if (permissionGranted == PermissionStatus.denied) {
+      permissionGranted = await location.requestPermission();
+    }
+
+    // 3. Initialize Screens ONLY after permission is settled
+    if (mounted) {
+      setState(() {
+        _screens = [
+          MapScreen(user: widget.user),
+          const RoadDiscoveryScreen(),
+          const ProfileScreen(),
+        ];
+        _isPermissionChecked = true;
+      });
+
+      // 4. Start Discovery Service safely
+      final settings = context.read<SettingsProvider>();
+      if (settings.isDiscoveryOn && permissionGranted == PermissionStatus.granted) {
+        context.read<RoadDiscoveryService>().startDiscovery();
+      }
+    }
   }
 }

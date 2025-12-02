@@ -193,18 +193,15 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
 
   Future<void> _initLocationServices() async {
     var locationService = Location();
-    bool serviceEnabled = await locationService.serviceEnabled();
-    if (!serviceEnabled) {
-      serviceEnabled = await locationService.requestService();
-      if (!serviceEnabled) return;
-    }
+
     PermissionStatus permissionGranted = await locationService.hasPermission();
-    if (permissionGranted == PermissionStatus.denied) {
-      permissionGranted = await locationService.requestPermission();
-      if (permissionGranted != PermissionStatus.granted) return;
+
+    if (permissionGranted == PermissionStatus.granted) {
+      NotificationService().showLocationActiveNotification();
+      _listenToLocationChanges();
+    } else {
+      debugPrint("Location permission not granted in MapScreen");
     }
-    NotificationService().showLocationActiveNotification();
-    _listenToLocationChanges();
   }
 
   // MARKER ANIMATION: Helper function to update the marker's state on the map

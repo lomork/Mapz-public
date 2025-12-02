@@ -1,4 +1,3 @@
-// lib/services/database_service.dart
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
@@ -24,7 +23,7 @@ class DatabaseService {
     String path = join(documentsDirectory.path, 'mapz.db');
     return await openDatabase(
       path,
-      version: 2,
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -37,21 +36,24 @@ class DatabaseService {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         placeId TEXT UNIQUE NOT NULL,
         latitude REAL NOT NULL,
-        longitude REAL NOT NULL
+        longitude REAL NOT NULL,
+        country TEXT DEFAULT 'Unknown'
       )
     ''');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 2) {
-      // Add the new column to the existing table
-      await db.execute("ALTER TABLE discovered_roads ADD COLUMN country TEXT DEFAULT 'Unknown'");
+    if (oldVersion < 4) {
+      try {
+        await db.execute("ALTER TABLE discovered_roads ADD COLUMN country TEXT DEFAULT 'Unknown'");
+        print("Database upgraded: 'country' column added.");
+      } catch (e) {
+        // If the column already exists, this might throw, which is fine.
+        print("Migration error (safe to ignore if column exists): $e");
+      }
     }
   }
 
-  // --- CRUD Operations ---
-
-  // Batch Insert (for _snapAndStorePath)
   Future<void> insertRoads(List<DiscoveredRoad> roads) async {
     Database db = await database;
     Batch batch = db.batch();

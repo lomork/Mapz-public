@@ -36,8 +36,8 @@ dependencies:
   cupertino_icons: ^1.0.8
   google_maps_flutter: ^2.6.1
   location: ^5.0.3
-  firebase_core: ^2.27.0
-  firebase_auth: ^4.17.8
+  firebase_core: ^4.2.1
+  firebase_auth: ^6.1.2
   shared_preferences: ^2.2.2
   flutter_tts: ^3.8.3
   wakelock_plus: ^1.1.4
@@ -45,23 +45,22 @@ dependencies:
   http: ^1.2.1
   uuid: ^4.4.0
   flutter_dotenv: ^5.1.0
-  #sliding_up_panel: ^2.0.0+1
   flutter_polyline_points: ^2.0.0
-  share_plus: ^9.0.0
+  share_plus: ^12.0.1
   intl: ^0.19.0
   url_launcher: ^6.2.6
   flutter_local_notifications: ^17.0.0
   provider: ^6.1.2
-  cloud_firestore: ^4.17.5
+  cloud_firestore: ^6.1.0
   flutter_svg: ^2.2.1
   country_picker: ^2.0.27
   image_picker: ^1.2.0
-  firebase_storage: ^11.7.7
+  firebase_storage: ^13.0.4
   sqflite: ^2.4.2
   path_provider: ^2.1.5
   flutter_image_compress: ^2.0.4
-  model_viewer_plus: ^1.8.0
-  web: ^0.5.0
+  web: ^1.1.1
+  permission_handler: ^11.3.0
 
 dev_dependencies:
   flutter_test:
@@ -92,12 +91,10 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
-    - assets/models/
     - assets/map_style_dark.json
     - assets/map_style_light.json
     - assets/animations/Login_Screen_Transition_Animation.mp4
     - .env
-
 
 
   # To add assets to your application, add an assets section, like this:
