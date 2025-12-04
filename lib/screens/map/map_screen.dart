@@ -17,6 +17,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 import 'package:mapz/screens/profile/profile_screen.dart';
 import 'package:mapz/screens/profile/edit_profile_screen.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart';
 
 import '../../api/google_maps_api_service.dart';
 import '../../main.dart';
@@ -456,16 +458,69 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
   }
 
   Future<void> _handleMapTap(LatLng position) async {
-    _searchFocusNode.unfocus();
+    final mapProvider = context.read<MapProvider>();
+
+    // 1. Handle Taps While Searching: Stop search, do nothing else.
+    if (mapProvider.isSearching) {
+      _searchFocusNode.unfocus();
+      mapProvider.stopSearch(_searchFocusNode, _searchController);
+      return;
+    }
+
     try {
       final apiService = Provider.of<GoogleMapsApiService>(context, listen: false);
       final result = await apiService.reverseGeocode(position);
 
       if (result['status'] == 'OK' && result['results'].isNotEmpty) {
-        final place = result['results'][0];
-        final String placeId = place['place_id'];
-        final String description = place['formatted_address'];
-        _selectPlace(placeId, description);
+        final results = result['results'] as List;
+        dynamic targetPlace;
+
+        // 2. PRIORITY SEARCH: Look for a specific POI (Establishment) FIRST
+        // We iterate through ALL results looking for a business/landmark.
+        targetPlace = results.firstWhere((p) {
+          final List<dynamic> types = p['types'] ?? [];
+          return types.any((t) => [
+            'establishment',
+            'point_of_interest',
+            'premise',
+            'park',
+            'tourist_attraction',
+            'restaurant',
+            'store',
+            'lodging',
+            'school',
+            'museum',
+            'place_of_worship'
+          ].contains(t));
+        }, orElse: () => null);
+
+        // 3. If NO POI found, check if we should ignore it.
+        // If targetPlace is null, it means we only found addresses/streets.
+        // You requested to IGNORE empty space/streets.
+
+        if (targetPlace != null) {
+          // Found a valid POI!
+          final String placeId = targetPlace['place_id'];
+          String description = targetPlace['formatted_address'];
+
+          // Try to get the short name
+          if (targetPlace.containsKey('address_components') && targetPlace['address_components'] is List) {
+            final components = targetPlace['address_components'] as List;
+            if (components.isNotEmpty) {
+              description = components[0]['long_name'];
+            }
+          }
+
+          await mapProvider.selectPlace(placeId, description);
+          if (mapProvider.selectedPlace != null) {
+            mapController.animateCamera(
+                CameraUpdate.newLatLngZoom(mapProvider.selectedPlace!.coordinates, 16)
+            );
+          }
+        } else {
+          // Only found generic addresses (streets, routes, localities). Ignore.
+          debugPrint("Tap ignored: No POI found. Closest result was generic: ${results.first['types']}");
+        }
       }
     } catch (e) {
       debugPrint("Failed to get place from tap: $e");
@@ -999,11 +1054,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
               myLocationButtonEnabled: false,
               myLocationEnabled: false,
               zoomControlsEnabled: false,
-              onTap: (position) {
-                if (mapProvider.isSearching) {
-                  mapProvider.stopSearch(_searchFocusNode, _searchController);
-                }
-              },
+              onTap: _handleMapTap,
+
               onLongPress: (pos) => _showMarkerSelectionDialog(),
               mapType: _currentMapType,
               trafficEnabled: _isTrafficEnabled,

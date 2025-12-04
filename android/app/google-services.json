@@ -8,9 +8,9 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:416471692126:android:bf64a0299a732cee6795cf",
+        "mobilesdk_app_id": "1:416471692126:android:bab8c816f3a8efd66795cf",
         "android_client_info": {
-          "package_name": "com.example.mapz"
+          "package_name": "com.mapz.navigation"
         }
       },
       "oauth_client": [],

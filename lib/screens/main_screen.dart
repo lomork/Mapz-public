@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import '../../services/road_discovery_service.dart';
 import '../../screens/profile/profile_screen.dart';
 import '../../providers/settings_provider.dart';
+import '../../providers/map_provider.dart';
 
 
 class MainScreen extends StatefulWidget {
@@ -51,22 +52,44 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_isPermissionChecked || _screens == null) {
+    if (!_isPermissionChecked) { // Removed null check on _screens as it's late initialized
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
       );
     }
+
+    // 1. Check if Keyboard is Open
+    final bool isKeyboardOpen = MediaQuery
+        .of(context)
+        .viewInsets
+        .bottom > 0;
+
+    // 2. Check if Place Details are Open (Watch the MapProvider)
+    final mapProvider = context.watch<MapProvider>();
+    final bool isPlaceDetailsOpen = mapProvider.selectedPlace != null;
+
+    // 3. Determine Dock Visibility
+    // Hide if keyboard is open OR if we are looking at place details
+    final bool isDockVisible = !isKeyboardOpen && !isPlaceDetailsOpen;
+
     return Scaffold(
+      // Resize to avoid bottom inset allows the map to extend behind the keyboard area
+      // preventing the whole UI from crunching up when keyboard opens.
+      resizeToAvoidBottomInset: false,
       body: Stack(
         children: [
           PageView(
             controller: _pageController,
             physics: const NeverScrollableScrollPhysics(),
             children: _screens,
-
           ),
-          Positioned(
-            bottom: 30,
+
+          // --- ANIMATED DOCK ---
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+            // If visible, sit at bottom: 30. If hidden, slide down off-screen (-100).
+            bottom: isDockVisible ? 30 : -150,
             left: 0,
             right: 0,
             child: Center(
@@ -80,7 +103,8 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
   }
-  Future<void> _initAppPermissions() async {
+
+    Future<void> _initAppPermissions() async {
     final location = Location();
 
     // 1. Check/Request Service

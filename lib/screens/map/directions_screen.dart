@@ -824,7 +824,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     final double newSize = 110 + (_currentZoom - 12) * 20;
     final double clampedSize = newSize.clamp(110.0, 300.0);
 
-    // Always use the dynamic arrow bitmap
     _navigationMarkerIcon = await _createDynamicMarkerBitmap(clampedSize);
     _updateNavigationMarkers();
   }

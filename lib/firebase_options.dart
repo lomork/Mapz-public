@@ -46,25 +46,28 @@ class DefaultFirebaseOptions {
     messagingSenderId: '416471692126',
     projectId: 'mapz-public',
     authDomain: 'mapz-public.firebaseapp.com',
+    databaseURL: 'https://mapz-public-default-rtdb.firebaseio.com',
     storageBucket: 'mapz-public.firebasestorage.app',
     measurementId: 'G-062WV29YXC',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyBVE3M48PFwze57lt-mCiXC5rTJlg72r3w',
-    appId: '1:416471692126:android:bf64a0299a732cee6795cf',
+    appId: '1:416471692126:android:bab8c816f3a8efd66795cf',
     messagingSenderId: '416471692126',
     projectId: 'mapz-public',
+    databaseURL: 'https://mapz-public-default-rtdb.firebaseio.com',
     storageBucket: 'mapz-public.firebasestorage.app',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyD-f9AhfaudH326e5CMcYO9IRbOrqpMGR4',
-    appId: '1:416471692126:ios:1657989c543dca0c6795cf',
+    apiKey: 'AIzaSyAE2b9DRMdDOnpSBzbjM0J5B0lPZAmzAMY',
+    appId: '1:416471692126:ios:133bbd176eaffac86795cf',
     messagingSenderId: '416471692126',
     projectId: 'mapz-public',
+    databaseURL: 'https://mapz-public-default-rtdb.firebaseio.com',
     storageBucket: 'mapz-public.firebasestorage.app',
-    iosBundleId: 'com.example.mapz',
+    iosBundleId: 'com.mapz.navigation',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
@@ -72,6 +75,7 @@ class DefaultFirebaseOptions {
     appId: '1:416471692126:ios:1657989c543dca0c6795cf',
     messagingSenderId: '416471692126',
     projectId: 'mapz-public',
+    databaseURL: 'https://mapz-public-default-rtdb.firebaseio.com',
     storageBucket: 'mapz-public.firebasestorage.app',
     iosBundleId: 'com.example.mapz',
   );
@@ -82,7 +86,9 @@ class DefaultFirebaseOptions {
     messagingSenderId: '416471692126',
     projectId: 'mapz-public',
     authDomain: 'mapz-public.firebaseapp.com',
+    databaseURL: 'https://mapz-public-default-rtdb.firebaseio.com',
     storageBucket: 'mapz-public.firebasestorage.app',
     measurementId: 'G-03VG1GYGT1',
   );
+
 }
