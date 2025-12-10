@@ -144,6 +144,13 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   double _currentZoom = 18.0;
   double _currentUserRotation = 0.0;
 
+  AnimationController? _markerAnimationController;
+  Animation<LatLng>? _positionAnimation;
+  Animation<double>? _rotationAnimation;
+  LatLng? _previousLocation;
+  double _previousRotation = 0.0;
+  bool _isMovingCameraProgrammatically = false;
+
   int _fastestRouteIndex = 0;
   int _scenicRouteIndex = 0;
 
@@ -173,6 +180,12 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   void initState() {
     super.initState();
     _destination = widget.destination;
+    _lastLocation = widget.originCoordinates;
+    _previousLocation = widget.originCoordinates;
+    _markerAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    );
     _progressAnimationController = AnimationController(
       duration: const Duration(milliseconds: 500),
       vsync: this,
@@ -211,6 +224,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     _flutterTts.stop();
     _speedLimitTimer?.cancel();
     _progressAnimationController?.dispose();
+    _markerAnimationController?.dispose();
     WakelockPlus.disable();
     NotificationService().cancelNavigationNotification();
     _navigationStopwatch.stop();
@@ -741,8 +755,10 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         right: 15,
         child: FloatingActionButton(
           mini: true,
-          onPressed: _recenterCamera,
-          child: const Icon(Icons.my_location),
+          backgroundColor: _isCameraLocked ? Colors.blue : Colors.white,
+          foregroundColor: _isCameraLocked ? Colors.white : Colors.grey,
+          onPressed: _toggleCameraLock,
+          child: Icon(_isCameraLocked ? Icons.navigation : Icons.my_location),
         ),
       )
     ];
@@ -754,9 +770,24 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     }
 
     Set<Marker> displayMarkers = Set.from(_routeDifferenceMarkers);
-
     displayMarkers.addAll(_markers.where((m) => m.markerId.value != 'origin'));
-    displayMarkers.addAll(_navigationMarkers);
+
+    if (_navigationMarkerIcon != null) {
+      final LatLng markerPosition = _positionAnimation?.value ?? _lastLocation ?? const LatLng(0,0);
+      final double markerRotation = _rotationAnimation?.value ?? _currentUserRotation;
+
+      displayMarkers.add(
+        Marker(
+          markerId: const MarkerId('navigation_user'),
+          position: markerPosition,
+          icon: _navigationMarkerIcon!,
+          rotation: markerRotation,
+          anchor: const Offset(0.5, 0.5),
+          flat: true,
+          zIndex: 2.0,
+        ),
+      );
+    }
 
     return displayMarkers;
   }
@@ -767,32 +798,41 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       backgroundColor: Colors.transparent,
       body: Stack(
         children: [
-          GoogleMap(
-            onMapCreated: _onMapCreated,
-            initialCameraPosition: CameraPosition(target: widget.destination.coordinates, zoom: 12),
-            onCameraMove: (CameraPosition position) {
-              _currentZoom = position.zoom;
-            },
-            onCameraIdle: () {
-              _updateNavigationMarkerIcon();
-            },
-            polylines: _polylines,
-            markers: _buildMarkers(),
-            onCameraMoveStarted: () {
-              if (_isCameraLocked) {
-                setState(() {
-                  _isCameraLocked = false;
-                });
+          // Wrap GoogleMap in AnimatedBuilder to rebuild on every animation frame
+          AnimatedBuilder(
+              animation: _markerAnimationController!,
+              builder: (context, child) {
+                return GoogleMap(
+                  onMapCreated: _onMapCreated,
+                  initialCameraPosition: CameraPosition(target: widget.destination.coordinates, zoom: 12),
+                  onCameraMove: (CameraPosition position) {
+                    _currentZoom = position.zoom;
+                  },
+                  // --- MODIFIED: Logic to ignore programmatic moves ---
+                  onCameraMoveStarted: () {
+                    if (!_isMovingCameraProgrammatically) {
+                      setState(() {
+                        _isCameraLocked = false;
+                      });
+                    }
+                  },
+                  // ----------------------------------------------------
+                  onCameraIdle: () {
+                    _updateNavigationMarkerIcon();
+                  },
+                  polylines: _polylines,
+                  markers: _buildMarkers(), // This now returns interpolated position
+                  zoomControlsEnabled: false,
+                  myLocationEnabled: false,
+                  myLocationButtonEnabled: false,
+                  padding: EdgeInsets.only(
+                      top: _isNavigating ? 150 : 120,
+                      bottom: _isNavigating ? 100 : MediaQuery.of(context).size.height * 0.2
+                  ),
+                );
               }
-            },
-            zoomControlsEnabled: false,
-            myLocationEnabled: false,
-            myLocationButtonEnabled: false,
-            padding: EdgeInsets.only(
-                top: _isNavigating ? 150 : 120,
-                bottom: _isNavigating ? 100 : MediaQuery.of(context).size.height * 0.2
-            ),
           ),
+
           if (_isRecalculating)
             Container(
               color: Colors.black.withOpacity(0.5),
@@ -825,7 +865,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     final double clampedSize = newSize.clamp(110.0, 300.0);
 
     _navigationMarkerIcon = await _createDynamicMarkerBitmap(clampedSize);
-    _updateNavigationMarkers();
   }
 
   Future<BitmapDescriptor> _createTransparentMarker() async {
@@ -834,6 +873,27 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     final ui.Image image = await recorder.endRecording().toImage(1, 1);
     final ByteData? data = await image.toByteData(format: ui.ImageByteFormat.png);
     return BitmapDescriptor.fromBytes(data!.buffer.asUint8List());
+  }
+
+  void _toggleCameraLock() {
+    setState(() {
+      _isCameraLocked = !_isCameraLocked;
+    });
+    if (_isCameraLocked && _lastLocation != null) {
+      _isMovingCameraProgrammatically = true;
+      mapController.animateCamera(CameraUpdate.newCameraPosition(
+        CameraPosition(
+          target: _lastLocation!,
+          zoom: 18,
+          tilt: 50.0,
+          bearing: _currentUserRotation,
+        ),
+      )).then((_) {
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) _isMovingCameraProgrammatically = false;
+        });
+      });
+    }
   }
 
   void _updateNavigationMarkers() {
@@ -1559,68 +1619,83 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
   void _listenToLocationForNavigation() {
     final locationService = Location();
-    _navigationLocationSubscription =
-        locationService.onLocationChanged.listen((LocationData currentLocation) async{
-          if (!mounted || !_isNavigating) return;
+    _navigationLocationSubscription = locationService.onLocationChanged.listen((LocationData currentLocation) async {
+      if (!mounted || !_isNavigating) return;
 
-          final newLatLng =
-          LatLng(currentLocation.latitude!, currentLocation.longitude!);
-          _lastLocation = newLatLng;
-          final newRotation = currentLocation.heading ?? 0.0;
-          _currentUserRotation = newRotation;
+      final newLatLng = LatLng(currentLocation.latitude!, currentLocation.longitude!);
+      final newRotation = currentLocation.heading ?? _currentUserRotation;
 
-          if (_isCameraLocked && !_isRecalculating) {
-            mapController.animateCamera(CameraUpdate.newCameraPosition(
-              CameraPosition(
-                target: newLatLng,
-                zoom: 18,
-                tilt: 50.0,
-                bearing: newRotation,
-              ),
-            ));
-          }
+      // 1. Setup Animation from Old Pos -> New Pos
+      if (_lastLocation != null) {
+        _previousLocation = _lastLocation;
+        _previousRotation = _currentUserRotation;
 
-          if (!_isRecalculating) {
-            bool isCurrentlyOffRoute = _isOffRoute(
-                newLatLng, _routes[_selectedRouteIndex].polylinePoints);
-            if (isCurrentlyOffRoute) {
-              _offRouteStrikeCount++;
-            } else {
-              _offRouteStrikeCount = 0;
-            }
+        _positionAnimation = LatLngTween(begin: _previousLocation!, end: newLatLng)
+            .animate(_markerAnimationController!);
 
-            if (_offRouteStrikeCount >= _requiredStrikesForReroute) {
-              _offRouteStrikeCount = 0;
-              _recalculateRoute(newLatLng);
-              return;
-            }
-          }
-          _updateNavigationMarkers();
+        // Calculate shortest rotation path (e.g., 350 -> 10 deg should be +20, not -340)
+        double diff = newRotation - _previousRotation;
+        if (diff > 180) diff -= 360;
+        if (diff < -180) diff += 360;
+        double targetRotation = _previousRotation + diff;
 
-          if (!_isRecalculating) {
-            _updateNavigationState(newLatLng);
-          }
+        _rotationAnimation = Tween<double>(begin: _previousRotation, end: targetRotation)
+            .animate(_markerAnimationController!);
+
+        _markerAnimationController!.forward(from: 0.0);
+      }
+
+      _lastLocation = newLatLng;
+      _currentUserRotation = newRotation;
+
+      if (_isCameraLocked && !_isRecalculating) {
+        _isMovingCameraProgrammatically = true;
+
+        mapController.animateCamera(CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: newLatLng,
+            zoom: 18,
+            tilt: 50.0,
+            bearing: newRotation,
+          ),
+        ));
+
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) _isMovingCameraProgrammatically = false;
         });
+      }
+
+      if (!_isRecalculating) {
+        bool isCurrentlyOffRoute = _isOffRoute(newLatLng, _routes[_selectedRouteIndex].polylinePoints);
+        if (isCurrentlyOffRoute) {
+          _offRouteStrikeCount++;
+        } else {
+          _offRouteStrikeCount = 0;
+        }
+
+        if (_offRouteStrikeCount >= _requiredStrikesForReroute) {
+          _offRouteStrikeCount = 0;
+          _recalculateRoute(newLatLng);
+          return;
+        }
+        _updateNavigationState(newLatLng);
+      }
+    });
   }
 
   Future<BitmapDescriptor> _createDynamicMarkerBitmap(double size) async {
     final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(pictureRecorder);
-
     final double halfSize = size / 2;
 
-    // 1. Draw the "Glow" (Shadow)
     final Paint glowPaint = Paint()
       ..color = Colors.blue.withOpacity(0.4)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 15);
-
     canvas.drawCircle(Offset(halfSize, halfSize), size / 3, glowPaint);
 
-    // 2. Draw the Arrow (Path)
     final Paint arrowPaint = Paint()
       ..color = Colors.blue.shade700
       ..style = PaintingStyle.fill;
-
     final Paint borderPaint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
@@ -1628,13 +1703,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       ..strokeJoin = StrokeJoin.round;
 
     final Path path = Path();
-    // Tip of the arrow (Top Center)
     path.moveTo(halfSize, size * 0.1);
-    // Bottom Right
     path.lineTo(size * 0.85, size * 0.85);
-    // Bottom Center (Indent to make it a chevron)
     path.lineTo(halfSize, size * 0.7);
-    // Bottom Left
     path.lineTo(size * 0.15, size * 0.85);
     path.close();
 
@@ -2065,4 +2136,17 @@ class _ConnectingTimelinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class LatLngTween extends Tween<LatLng> {
+  LatLngTween({required LatLng begin, required LatLng end})
+      : super(begin: begin, end: end);
+
+  @override
+  LatLng lerp(double t) {
+    return LatLng(
+      begin!.latitude + (end!.latitude - begin!.latitude) * t,
+      begin!.longitude + (end!.longitude - begin!.longitude) * t,
+    );
+  }
 }
