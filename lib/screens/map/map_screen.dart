@@ -44,7 +44,8 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, AutomaticKeepAliveClientMixin{
   late GoogleMapController mapController;
   bool _isMapControllerInitialized = false;
-  final LatLng _center = const LatLng(44.6702, -63.5739);
+  final LatLng _center = const LatLng(56.1304, -106.3468);
+  double _currentZoom = 4.0;
   MapType _currentMapType = MapType.normal;
   bool _isTrafficEnabled = false;
   final Location _locationService = Location();
@@ -52,6 +53,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
   StreamSubscription<LocationData>? _locationSubscription;
   StreamSubscription<LocationData>? _fakeLocationSubscription;
   int _currentIndex = 0;
+  CameraPosition? _currentCameraPosition;
 
   bool _isProfileMenuVisible = false;
   bool _isAdaptiveDiscoveryEnabled = true;
@@ -206,7 +208,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     }
   }
 
-  // MARKER ANIMATION: Helper function to update the marker's state on the map
   void _updateUserMarker() {
     if (_currentUserLatLng == null) return;
     final marker = Marker(
@@ -221,8 +222,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     _markers.removeWhere((m) => m.markerId.value == 'userLocation');
     _markers.add(marker);
   }
-
-  // In _MapScreenState
 
   Future<void> _listenToLocationChanges() async {
     final locationService = Location();
@@ -273,18 +272,22 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
         _previousRotation = newRotation;
       });
 
-      // --- FIX: FORCE CAMERA MOVE ON FIRST LOAD ---
       if (_isMapControllerInitialized) {
         mapController.animateCamera(CameraUpdate.newCameraPosition(
           CameraPosition(
               target: newLatLng,
-              zoom: 15.0, // Zoom in closer for the user
+              zoom: 15.0,
               bearing: newRotation,
               tilt: 0),
         ));
       }
       return;
     }
+
+    setState(() {
+      _currentUserLatLng = newLatLng;
+      _currentUserRotation = newRotation;
+    });
 
     _positionAnimation = LatLngTween(begin: _previousLatLng!, end: newLatLng)
         .animate(_markerAnimationController!);
@@ -319,6 +322,32 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     if (_searchFocusNode.hasFocus && !mapProvider.isSearching) {
       mapProvider.startSearch(_searchFocusNode);
     }
+  }
+
+  Future<void> _restoreLastCameraPosition() async {
+    final prefs = await SharedPreferences.getInstance();
+    final double? lat = prefs.getDouble('last_map_lat');
+    final double? lng = prefs.getDouble('last_map_lng');
+    final double? zoom = prefs.getDouble('last_map_zoom');
+
+    if (lat != null && lng != null && _isMapControllerInitialized) {
+      mapController.moveCamera(CameraUpdate.newCameraPosition(
+        CameraPosition(
+          target: LatLng(lat, lng),
+          zoom: zoom ?? 15.0,
+        ),
+      ));
+    }
+  }
+
+  Future<void> _saveCameraPosition() async {
+    // Check if we have a valid position to save
+    if (_currentCameraPosition == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('last_map_lat', _currentCameraPosition!.target.latitude);
+    await prefs.setDouble('last_map_lng', _currentCameraPosition!.target.longitude);
+    await prefs.setDouble('last_map_zoom', _currentCameraPosition!.zoom);
   }
 
   void _onSearchQueryChanged(String query) {
@@ -652,6 +681,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     mapController = controller;
     _isMapControllerInitialized = true;
     _updateMapStyle();
+    _restoreLastCameraPosition();
   }
 
   void _updateMapStyle() {
@@ -935,7 +965,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
 
     final backgroundPaint = Paint()..color = backgroundColor;
 
-    // Draw a teardrop shape
     final path = Path()
       ..moveTo(size / 2, size)
       ..arcTo(Rect.fromCircle(center: Offset(size / 2, size / 2), radius: size / 2), pi, -pi, false)
@@ -1047,9 +1076,20 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                 mapController = controller;
                 _isMapControllerInitialized = true;
                 _updateMapStyle();
+                _restoreLastCameraPosition();
               },
               initialCameraPosition: CameraPosition(
-                  target: _center, zoom: 12.0),
+                  target: _center, zoom: _currentZoom),
+
+              onCameraMove: (CameraPosition position) {
+                _currentZoom = position.zoom;
+                _currentCameraPosition = position;
+              },
+
+              onCameraIdle: () {
+                _saveCameraPosition();
+              },
+
               markers: _buildMarkers(mapProvider),
               myLocationButtonEnabled: false,
               myLocationEnabled: false,
@@ -1087,7 +1127,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
             _buildSearchResultsOverlay(mapProvider),
 
           if (mapProvider.selectedPlace == null && !mapProvider.isSearching && mapProvider.nearbySearchResults.isEmpty) ...[
-            //_buildBottomNavBar(),
             _buildRightSideButtons(),
           ],
 

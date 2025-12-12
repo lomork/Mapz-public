@@ -21,6 +21,8 @@ import '../../api/google_maps_api_service.dart';
 import '../../models/place.dart';
 import '../../models/route.dart';
 import '../../services/notification_service.dart';
+import '../../models/trip_history_model.dart';
+import '../../services/database_service.dart';
 import '../../widgets/animated_route_line.dart';
 import '../../widgets/pulsing_start_button.dart';
 import '../../utils/loading_overlay.dart';
@@ -118,6 +120,13 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   List<RouteInfo> _routes = [];
   RouteType _routeType = RouteType.fastest;
 
+  bool _show3DCar = false;
+  double _carScreenX = 0;
+  double _carScreenY = 0;
+  String _selectedVehicleAsset = 'arrow';
+  String? _selectedVehicleModel;
+  final Map<String, String> _localModelPaths = {};
+
   late bool _isMapControllerInitialized = false;
 
   bool _isNavigating = false;
@@ -162,6 +171,10 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   int _offRouteStrikeCount = 0;
   static const int _requiredStrikesForReroute = 3;
   bool _isCameraLocked = true;
+
+  DateTime? _tripStartTime;
+  List<LatLng> _tripPathRecorded = [];
+  Timer? _offRouteCheckTimer;
 
   String _getDirectionAbbreviation(String instruction) {
     final lower = instruction.toLowerCase();
@@ -220,6 +233,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
   @override
   void dispose() {
+    _offRouteCheckTimer?.cancel();
     _navigationLocationSubscription?.cancel();
     _flutterTts.stop();
     _speedLimitTimer?.cancel();
@@ -339,6 +353,29 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   Future<void> _getDirections() async {
     if (_origin == null || _destination == null) {
       return;
+    }
+
+    if (_origin!.placeId == 'user_location') {
+      try {
+        final location = Location();
+        final hasPermission = await location.hasPermission();
+        if (hasPermission == PermissionStatus.granted) {
+          final locData = await location.getLocation();
+          if (locData.latitude != null && locData.longitude != null) {
+            final currentLatLng = LatLng(locData.latitude!, locData.longitude!);
+            // Quietly update the origin coordinate
+            _origin = PlaceDetails(
+                placeId: 'user_location',
+                name: "Current Location",
+                address: "Your Location", // Or reverse geocode again if you want
+                coordinates: currentLatLng
+            );
+            _lastLocation = currentLatLng; // Sync tracking
+          }
+        }
+      } catch (e) {
+        debugPrint("Could not refresh live location: $e");
+      }
     }
 
     LoadingOverlay.show(context);
@@ -511,10 +548,11 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       polylines.add(Polyline(
         polylineId: PolylineId('route_traffic_segment_$i'),
         points: points,
-        color: color,
-        width: 8,
+        color: baseColor,
+        width: 19,//width of polyline.
         startCap: Cap.roundCap,
         endCap: Cap.roundCap,
+        jointType: JointType.round,
       ));
     }
     return polylines;
@@ -1536,14 +1574,20 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     return BitmapDescriptor.fromBytes(data!.buffer.asUint8List());
   }
 
-  void _startNavigation() async{
+  void _startNavigation() async {
     if (_routes.isEmpty) return;
     await _updateNavigationMarkerIcon();
     WakelockPlus.enable();
+
+    _tripStartTime = DateTime.now();
+    _tripPathRecorded = [];
+    _offRouteStrikeCount = 0;
+
     setState(() {
       _isNavigating = true;
       _navigationStarted = true;
     });
+
     _navigationStopwatch.start();
     _speak(_navInstruction);
     _listenToLocationForNavigation();
@@ -1554,15 +1598,48 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         _getSpeedLimit(_lastLocation!);
       }
     });
+
+    _startOffRouteChecker();
   }
 
-  void _stopNavigation() {
+  void _startOffRouteChecker() {
+    _offRouteCheckTimer?.cancel();
+    _offRouteCheckTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (_isNavigating && !_isRecalculating && _lastLocation != null) {
+        _checkIfOffRoute(_lastLocation!);
+      }
+    });
+  }
+
+  void _stopNavigation() async {
+    // 1. Capture End Time
+    final endTime = DateTime.now();
+    final durationSecs = _navigationStopwatch.elapsed.inSeconds;
+
     WakelockPlus.disable();
     _navigationLocationSubscription?.cancel();
     _speedLimitTimer?.cancel();
+    _offRouteCheckTimer?.cancel(); // Stop checking
     NotificationService().cancelNavigationNotification();
     _navigationStopwatch.stop();
     _navigationStopwatch.reset();
+
+    // 2. Save Trip to Database (if it was a valid trip)
+    if (_origin != null && _destination != null && _tripPathRecorded.length > 5) {
+      final trip = TripHistory(
+        startAddress: _origin!.address,
+        endAddress: _destination!.address,
+        startTime: _tripStartTime!,
+        endTime: endTime,
+        durationSeconds: durationSecs,
+        distanceText: _routes[_selectedRouteIndex].distance, // Approx distance
+        routePath: List.from(_tripPathRecorded),
+      );
+
+      await DatabaseService().insertTrip(trip);
+      print("Trip Saved to History");
+    }
+
     setState(() {
       _isNavigating = false;
       _navigationStarted = false;
@@ -1619,68 +1696,109 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
   void _listenToLocationForNavigation() {
     final locationService = Location();
-    _navigationLocationSubscription = locationService.onLocationChanged.listen((LocationData currentLocation) async {
-      if (!mounted || !_isNavigating) return;
+    _navigationLocationSubscription =
+        locationService.onLocationChanged.listen((LocationData currentLocation) async {
+          if (!mounted || !_isNavigating) return;
 
-      final newLatLng = LatLng(currentLocation.latitude!, currentLocation.longitude!);
-      final newRotation = currentLocation.heading ?? _currentUserRotation;
+          final newLatLng = LatLng(currentLocation.latitude!, currentLocation.longitude!);
+          _lastLocation = newLatLng;
+          final newRotation = currentLocation.heading ?? 0.0;
+          _currentUserRotation = newRotation;
 
-      // 1. Setup Animation from Old Pos -> New Pos
-      if (_lastLocation != null) {
-        _previousLocation = _lastLocation;
-        _previousRotation = _currentUserRotation;
+          if (!_isRecalculating) {
 
-        _positionAnimation = LatLngTween(begin: _previousLocation!, end: newLatLng)
-            .animate(_markerAnimationController!);
+            // --- NEW: DYNAMIC CAMERA LOGIC ---
+            double targetZoom = 17.5;
+            double targetTilt = 50.0;
+            double lookAheadDistance = 0.0005; // Roughly 50m ahead (in degrees) to keep car at bottom
 
-        // Calculate shortest rotation path (e.g., 350 -> 10 deg should be +20, not -340)
-        double diff = newRotation - _previousRotation;
-        if (diff > 180) diff -= 360;
-        if (diff < -180) diff += 360;
-        double targetRotation = _previousRotation + diff;
+            // Calculate distance to next turn to adjust camera
+            if (_navSteps.isNotEmpty && _currentStepIndex < _navSteps.length) {
+              final currentStep = _navSteps[_currentStepIndex];
+              // We can reuse the helper here to check distance
+              double distToTurn = _calculateDistanceAlongPolyline(newLatLng, currentStep['polyline']['points']);
 
-        _rotationAnimation = Tween<double>(begin: _previousRotation, end: targetRotation)
-            .animate(_markerAnimationController!);
+              if (distToTurn < 100) {
+                // APPROACHING TURN: Zoom in to show the intersection clearly
+                // As we get closer (100m -> 0m), zoom goes from 18 -> 20
+                double ratio = (100 - distToTurn) / 100; // 0.0 to 1.0
+                targetZoom = 18.0 + (2.0 * ratio); // Max zoom 20.0
 
-        _markerAnimationController!.forward(from: 0.0);
-      }
+                // Reduce tilt slightly at the turn so we look "down" at the road
+                targetTilt = 50.0 - (20.0 * ratio); // Tilts down to 30.0 at the turn
 
-      _lastLocation = newLatLng;
-      _currentUserRotation = newRotation;
+                // Reduce lookahead so the car centers up slightly for the maneuver
+                lookAheadDistance = 0.0005 * (1 - ratio);
+              }
+            }
 
-      if (_isCameraLocked && !_isRecalculating) {
-        _isMovingCameraProgrammatically = true;
+            // Calculate "Look Ahead" Target
+            // This math moves the camera center forward based on your bearing
+            // effectively pushing your car icon to the bottom of the screen.
+            double headingRad = newRotation * (pi / 180.0);
+            double targetLat = newLatLng.latitude + (lookAheadDistance * cos(headingRad));
+            double targetLng = newLatLng.longitude + (lookAheadDistance * sin(headingRad));
 
-        mapController.animateCamera(CameraUpdate.newCameraPosition(
-          CameraPosition(
-            target: newLatLng,
-            zoom: 18,
-            tilt: 50.0,
-            bearing: newRotation,
-          ),
-        ));
+            mapController.animateCamera(CameraUpdate.newCameraPosition(
+              CameraPosition(
+                target: LatLng(targetLat, targetLng), // Look ahead point
+                zoom: targetZoom,                     // Dynamic Zoom
+                tilt: targetTilt,                     // Dynamic Tilt
+                bearing: newRotation,
+              ),
+            ));
+            // --- END DYNAMIC CAMERA ---
 
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted) _isMovingCameraProgrammatically = false;
+            // 2. Update 3D Car Position (Sync with screen pixels)
+            if (_show3DCar && _isMapControllerInitialized) {
+              try {
+                ScreenCoordinate screenPos = await mapController.getScreenCoordinate(newLatLng);
+                setState(() {
+                  _carScreenX = screenPos.x.toDouble();
+                  _carScreenY = screenPos.y.toDouble();
+                });
+              } catch (e) {
+                print("Error projecting car: $e");
+              }
+            }
+
+            bool isCurrentlyOffRoute = _isOffRoute(
+                newLatLng, _routes[_selectedRouteIndex].polylinePoints);
+            if (isCurrentlyOffRoute) {
+              _offRouteStrikeCount++;
+            } else {
+              _offRouteStrikeCount = 0;
+            }
+
+            if (_offRouteStrikeCount >= _requiredStrikesForReroute) {
+              _offRouteStrikeCount = 0;
+              _recalculateRoute(newLatLng);
+              return;
+            }
+          }
+
+          _updateNavigationMarkers();
+          if (!_isRecalculating) {
+            _updateNavigationState(newLatLng);
+          }
         });
-      }
+  }
+  void _checkIfOffRoute(LatLng userPosition) {
+    // Use a looser threshold (e.g., 60-80 meters)
+    bool isCurrentlyOffRoute = _isOffRoute(userPosition, _routes[_selectedRouteIndex].polylinePoints);
 
-      if (!_isRecalculating) {
-        bool isCurrentlyOffRoute = _isOffRoute(newLatLng, _routes[_selectedRouteIndex].polylinePoints);
-        if (isCurrentlyOffRoute) {
-          _offRouteStrikeCount++;
-        } else {
-          _offRouteStrikeCount = 0;
-        }
+    if (isCurrentlyOffRoute) {
+      _offRouteStrikeCount++;
+      print("Off route strike: $_offRouteStrikeCount");
+    } else {
+      _offRouteStrikeCount = 0;
+    }
 
-        if (_offRouteStrikeCount >= _requiredStrikesForReroute) {
-          _offRouteStrikeCount = 0;
-          _recalculateRoute(newLatLng);
-          return;
-        }
-        _updateNavigationState(newLatLng);
-      }
-    });
+    if (_offRouteStrikeCount >= _requiredStrikesForReroute) {
+      _offRouteStrikeCount = 0;
+      print("REROUTING NOW...");
+      _recalculateRoute(userPosition);
+    }
   }
 
   Future<BitmapDescriptor> _createDynamicMarkerBitmap(double size) async {
@@ -1733,12 +1851,16 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   }
 
   double _distanceToLineSegment(LatLng p, LatLng v, LatLng w) {
-    double l2 = _calculateDistance(v.latitude, v.longitude, w.latitude, w.longitude);
-    l2 = l2 * l2;
+    double l2 = (w.latitude - v.latitude) * (w.latitude - v.latitude) +
+        (w.longitude - v.longitude) * (w.longitude - v.longitude);
     if (l2 == 0.0) return _calculateDistance(p.latitude, p.longitude, v.latitude, v.longitude);
-    double t = ((p.latitude - v.latitude) * (w.latitude - v.latitude) + (p.longitude - v.longitude) * (w.longitude - v.longitude)) / l2;
+    double t = ((p.latitude - v.latitude) * (w.latitude - v.latitude) +
+        (p.longitude - v.longitude) * (w.longitude - v.longitude)) / l2;
     t = max(0, min(1, t));
-    return _calculateDistance(p.latitude, p.longitude, v.latitude + t * (w.latitude - v.latitude), v.longitude + t * (w.longitude - v.longitude));
+
+    double projectionLat = v.latitude + t * (w.latitude - v.latitude);
+    double projectionLng = v.longitude + t * (w.longitude - v.longitude);
+    return _calculateDistance(p.latitude, p.longitude, projectionLat, projectionLng);
   }
 
   Future<void> _recalculateRoute(LatLng newOrigin) async {
@@ -1793,6 +1915,37 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       _progressToNextManeuver = newProgress.clamp(0.0, 1.0);
     });
 
+    final fullRoute = _routes[_selectedRouteIndex].polylinePoints;
+    int closestIndex = _findClosestPointIndex(currentUserPosition, fullRoute);
+
+    if (closestIndex != -1) {
+      List<LatLng> travelledPoints = fullRoute.sublist(0, closestIndex + 1);
+      List<LatLng> remainingPoints = fullRoute.sublist(closestIndex);
+
+      Set<Polyline> updatedPolylines = {};
+
+      // Grey Line (Travelled)
+      updatedPolylines.add(Polyline(
+        polylineId: const PolylineId('travelled_path'),
+        points: travelledPoints,
+        color: Colors.grey,
+        width: 8,
+      ));
+
+      // Blue Line (Remaining)
+      updatedPolylines.add(Polyline(
+        polylineId: const PolylineId('remaining_path'),
+        points: remainingPoints,
+        color: Colors.blueAccent, // Or use your theme color
+        width: 8,
+      ));
+
+      setState(() {
+        _polylines.clear();
+        _polylines.addAll(updatedPolylines);
+      });
+    }
+
     NotificationService().showNavigationNotification(
         destination: _destination?.name ?? 'your destination',
         eta: _navEta,
@@ -1800,6 +1953,22 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         nextTurn: _navInstruction,
         maneuverIcon: _navManeuverIcon);
 
+  }
+
+  int _findClosestPointIndex(LatLng userPos, List<LatLng> path) {
+    int minIndex = -1;
+    double minDst = double.infinity;
+
+    // Optimization: Only search a subset around expected location if path is huge
+    // For now, simple search is fine for standard routes
+    for (int i = 0; i < path.length; i++) {
+      double dst = _calculateDistance(userPos.latitude, userPos.longitude, path[i].latitude, path[i].longitude);
+      if (dst < minDst) {
+        minDst = dst;
+        minIndex = i;
+      }
+    }
+    return minIndex;
   }
 
   void _updateNavInstruction() {
