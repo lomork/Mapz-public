@@ -1659,7 +1659,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
         elevation: 4.0,
         borderRadius: BorderRadius.circular(16.0),
         child: Container(
-          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.6),
+          constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.6),
           decoration: BoxDecoration(
             color: Theme.of(context).cardColor,
             borderRadius: BorderRadius.circular(16.0),
@@ -1677,13 +1678,22 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                 title: Text(suggestion.description),
                 onTap: () {
                   final prov = context.read<MapProvider>();
-                  _addToSearchHistory(SearchHistoryItem(placeId: suggestion.placeId, description: suggestion.description));
+                  _addToSearchHistory(SearchHistoryItem(
+                      placeId: suggestion.placeId,
+                      description: suggestion.description));
+
+                  // --- FIX: Wait for selection to finish before stopping search ---
                   prov.selectPlace(suggestion.placeId, suggestion.description).then((_) {
                     if (prov.selectedPlace != null) {
-                      mapController.animateCamera(CameraUpdate.newLatLngZoom(prov.selectedPlace!.coordinates, 15));
+                      mapController.animateCamera(
+                          CameraUpdate.newLatLngZoom(
+                              prov.selectedPlace!.coordinates, 15));
                     }
+                    // Clear UI manually after success
+                    _searchController.clear();
+                    _searchFocusNode.unfocus();
                   });
-                  prov.stopSearch(_searchFocusNode, _searchController);
+                  // DO NOT call prov.stopSearch() here; it kills the session token too early.
                 },
               );
             },
@@ -1693,18 +1703,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     );
   }
 
-
   Widget _buildHistoryAndSavedPlacesList(MapProvider mapProvider) {
     List<Widget> listItems = [];
 
     if (_savedPlaces.isNotEmpty) {
       listItems.add(const Padding(
         padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-        child: Text("Saved Places", style: TextStyle(fontWeight: FontWeight.bold)),
+        child:
+        Text("Saved Places", style: TextStyle(fontWeight: FontWeight.bold)),
       ));
-      // UI CHANGE: Horizontal scrollable list for saved places
       listItems.add(SizedBox(
-        height: 100, // Define a fixed height for the horizontal list
+        height: 100,
         child: ListView.builder(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1762,17 +1771,22 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
           title: Text(item.description),
           onTap: () {
             if (isPlace) {
-              // It's a place, select it
-              mapProvider.selectPlace(item.placeId!, item.description).then((_){
-                // ... animate camera ...
+              // --- FIX: Logic was missing here and had the same race condition ---
+              mapProvider.selectPlace(item.placeId!, item.description).then((_) {
+                if (mapProvider.selectedPlace != null) {
+                  mapController.animateCamera(CameraUpdate.newLatLngZoom(
+                      mapProvider.selectedPlace!.coordinates, 15));
+                }
+                _searchController.clear();
+                _searchFocusNode.unfocus();
               });
-              mapProvider.stopSearch(_searchFocusNode, _searchController);
             } else {
               // It's a keyword, perform a nearby search
               _searchController.text = item.description;
               if (_currentUserLatLng != null) {
                 mapProvider.searchNearby(item.description, _currentUserLatLng!);
               }
+              _searchFocusNode.unfocus();
             }
           },
         );

@@ -176,6 +176,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   List<LatLng> _tripPathRecorded = [];
   Timer? _offRouteCheckTimer;
 
+  int _browsingStepIndex = -1;
+
   String _getDirectionAbbreviation(String instruction) {
     final lower = instruction.toLowerCase();
     if (lower.contains('northwest') || lower.contains('north-west')) return 'NW';
@@ -524,12 +526,14 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     if (steps.isEmpty) return polylines;
 
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    final Color baseColor = isDarkMode ? Colors.greenAccent : Colors.blueAccent;
+    final Color baseColor =
+    isDarkMode ? Colors.greenAccent : Colors.blueAccent;
 
     for (var i = 0; i < steps.length; i++) {
       final step = steps[i];
       final duration = step['duration']['value'];
-      final durationInTraffic = step['duration_in_traffic']?['value'] ?? duration;
+      final durationInTraffic =
+          step['duration_in_traffic']?['value'] ?? duration;
       final delay = durationInTraffic - duration;
 
       Color color = baseColor;
@@ -548,11 +552,12 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       polylines.add(Polyline(
         polylineId: PolylineId('route_traffic_segment_$i'),
         points: points,
-        color: baseColor,
-        width: 19,//width of polyline.
+        color: color, // Use the traffic color determined above
+        width: 19, // Width of polyline.
         startCap: Cap.roundCap,
         endCap: Cap.roundCap,
         jointType: JointType.round,
+        zIndex: 1, // IMPORTANT: Ensure this is above the grey alternative routes
       ));
     }
     return polylines;
@@ -680,58 +685,110 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     final bool isTransit = _travelMode == TravelMode.transit;
 
     final newMarkers = <Marker>{
-      Marker(markerId: const MarkerId('origin'), position: _origin!.coordinates, icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)),
-      Marker(markerId: const MarkerId('destination'), position: _destination!.coordinates),
+      Marker(
+          markerId: const MarkerId('origin'),
+          position: _origin!.coordinates,
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)),
+      Marker(
+          markerId: const MarkerId('destination'),
+          position: _destination!.coordinates),
     };
     Set<Polyline> newPolylines = {};
 
-    final bool hasRoutes = (_travelMode != TravelMode.transit && _routes.isNotEmpty) ||
-        (_travelMode == TravelMode.transit && _transitRoutes.isNotEmpty);
+    final bool hasRoutes =
+        (_travelMode != TravelMode.transit && _routes.isNotEmpty) ||
+            (_travelMode == TravelMode.transit && _transitRoutes.isNotEmpty);
 
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    final Color routeColor = isDarkMode ? Colors.greenAccent : Colors.blueAccent;
+    final Color routeColor =
+    isDarkMode ? Colors.greenAccent : Colors.blueAccent;
+    // Define the color for inactive/alternative routes
+    final Color alternativeRouteColor = Colors.grey;
 
     if (hasRoutes) {
-      List<LatLng> points = [];
       if (!isTransit) {
-        points = _routes[_selectedRouteIndex].polylinePoints;
-      }
+        // --- 1. Draw Alternative Routes (Non-Selected) first ---
+        for (int i = 0; i < _routes.length; i++) {
+          if (i == _selectedRouteIndex) continue; // Skip the selected route for now
 
-      switch (_travelMode) {
-        case TravelMode.driving:
-          newPolylines = _createTrafficPolylines(_routes[_selectedRouteIndex].steps);
-          break;
-        case TravelMode.walking:
           newPolylines.add(Polyline(
-            polylineId: const PolylineId('route_walking'),
-            points: points,
-            color: routeColor,
+            polylineId: PolylineId('route_alt_$i'),
+            points: _routes[i].polylinePoints,
+            color: alternativeRouteColor,
             width: 6,
-            patterns: [PatternItem.dot, PatternItem.gap(10)],
+            zIndex: 0, // Draw behind the selected route
+            consumeTapEvents: true, // Allow tapping
+            onTap: () => _onRouteTapped(i), // Switch to this route on tap
           ));
-          break;
-        case TravelMode.bicycling:
-          newPolylines.add(Polyline(
-            polylineId: const PolylineId('route_cycling'),
-            points: points,
-            color: routeColor,
-            width: 6,
-            patterns: [PatternItem.dash(20), PatternItem.gap(15)],
-          ));
-          break;
-        case TravelMode.transit:
-          if (_detailedRoute != null) {
-            for (var step in _detailedRoute!.steps) {
-              newPolylines.add(Polyline(
-                polylineId: PolylineId('transit_step_${step.hashCode}'),
-                points: step.polylinePoints,
-                color: step.travelMode == StepTravelMode.walking ? Colors.grey : routeColor,
-                width: 6,
-                patterns: step.travelMode == StepTravelMode.walking ? [PatternItem.dot, PatternItem.gap(10)] : [],
-              ));
-            }
+        }
+
+        // --- 2. Draw Selected Route on Top ---
+        List<LatLng> points = _routes[_selectedRouteIndex].polylinePoints;
+        switch (_travelMode) {
+          case TravelMode.driving:
+          // _createTrafficPolylines now sets zIndex to 1
+            newPolylines.addAll(
+                _createTrafficPolylines(_routes[_selectedRouteIndex].steps));
+            break;
+          case TravelMode.walking:
+            newPolylines.add(Polyline(
+              polylineId: const PolylineId('route_walking'),
+              points: points,
+              color: routeColor,
+              width: 6,
+              zIndex: 1, // Draw on top
+              patterns: [PatternItem.dot, PatternItem.gap(10)],
+            ));
+            break;
+          case TravelMode.bicycling:
+            newPolylines.add(Polyline(
+              polylineId: const PolylineId('route_cycling'),
+              points: points,
+              color: routeColor,
+              width: 6,
+              zIndex: 1, // Draw on top
+              patterns: [PatternItem.dash(20), PatternItem.gap(15)],
+            ));
+            break;
+          default:
+            break;
+        }
+      } else {
+        // --- Transit Logic ---
+        // Draw alternative transit routes (simplified lines)
+        for (int i = 0; i < _transitRoutes.length; i++) {
+          if (i == _selectedRouteIndex) continue;
+          // For alternatives, we might just draw lines for each step in grey
+          for (var step in _transitRoutes[i].steps) {
+            newPolylines.add(Polyline(
+              polylineId: PolylineId('transit_alt_${i}_step_${step.hashCode}'),
+              points: step.polylinePoints,
+              color: alternativeRouteColor.withOpacity(0.7),
+              width: 5,
+              zIndex: 0,
+              consumeTapEvents: true,
+              onTap: () => _onRouteTapped(i),
+            ));
           }
-          break;
+        }
+
+        // Draw selected transit route
+        if (_detailedRoute != null) {
+          for (var step in _detailedRoute!.steps) {
+            newPolylines.add(Polyline(
+              polylineId: PolylineId('transit_step_${step.hashCode}'),
+              points: step.polylinePoints,
+              color: step.travelMode == StepTravelMode.walking
+                  ? Colors.grey
+                  : routeColor,
+              width: 6,
+              zIndex: 1, // On top
+              patterns: step.travelMode == StepTravelMode.walking
+                  ? [PatternItem.dot, PatternItem.gap(10)]
+                  : [],
+            ));
+          }
+        }
       }
     }
 
@@ -742,16 +799,21 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       _polylines.addAll(newPolylines);
     });
 
+    // Only move camera if we are not navigating and the controller is ready
     if (hasRoutes && _isMapControllerInitialized && !_isNavigating) {
       List<LatLng> fullRouteForBounds = isTransit
-          ? _transitRoutes[_selectedRouteIndex].steps.expand((s) => s.polylinePoints).toList()
+          ? _transitRoutes[_selectedRouteIndex]
+          .steps
+          .expand((s) => s.polylinePoints)
+          .toList()
           : _routes[_selectedRouteIndex].polylinePoints;
 
       if (fullRouteForBounds.isNotEmpty) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
             final bounds = _boundsFromLatLngList(fullRouteForBounds);
-            mapController.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80.0));
+            mapController
+                .animateCamera(CameraUpdate.newLatLngBounds(bounds, 80.0));
           }
         });
       }
@@ -956,102 +1018,184 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   }
 
   Widget _buildFuturisticTopCard() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final String directionAbbr = _getDirectionAbbreviation(_navInstruction);
+    // 1. Determine which step to show (Live vs Browsing)
+    final int displayIndex =
+    _browsingStepIndex != -1 ? _browsingStepIndex : _currentStepIndex;
+
+    // Safety Check
+    if (_navSteps.isEmpty || displayIndex >= _navSteps.length) {
+      return const SizedBox.shrink();
+    }
+
+    final currentStep = _navSteps[displayIndex];
+
+    // 2. Parse Instruction Text (Simplified) based on the specific step
+    String fullInstruction =
+    _stripHtmlIfNeeded(currentStep['html_instructions']);
+    String simplifiedInstruction = fullInstruction;
+    RegExp exp = RegExp(r'\b(on|onto)\s+(.*)', caseSensitive: false);
+    Match? match = exp.firstMatch(fullInstruction);
+    if (match != null && match.groupCount >= 2) {
+      simplifiedInstruction = match.group(2) ?? fullInstruction;
+    }
+
+    // 3. Get Icon & Abbreviation
+    final IconData icon = _getManeuverIcon(currentStep['maneuver']);
+    final String directionAbbr =
+    _getDirectionAbbreviation(simplifiedInstruction);
+
+    // 4. Get Distance
+    // If viewing the current live step, show remaining distance.
+    // If browsing other steps, show the total distance of that step.
+    String displayDistance;
+    if (displayIndex == _currentStepIndex) {
+      displayDistance = _distanceToNextManeuver;
+    } else {
+      displayDistance = currentStep['distance']['text'];
+    }
 
     return Positioned(
       top: MediaQuery.of(context).padding.top + 10,
       left: 15,
       right: 15,
-      child: GlassmorphicContainer(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                          _navManeuverIcon,
-                          color: Colors.white,
-                          size: 42
-                      ),
-                    ),
-                    if (directionAbbr.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        directionAbbr,
-                        style: const TextStyle(
-                          color: Colors.amber,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 16,
-                        ),
-                      ),
-                    ]
-                  ],
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+      child: GestureDetector(
+        // --- SWIPE GESTURES ---
+        onHorizontalDragEnd: (details) {
+          if (details.primaryVelocity! < 0) {
+            // Swipe Left -> Next Turn
+            _cycleStep(1);
+          } else if (details.primaryVelocity! > 0) {
+            // Swipe Right -> Previous Turn
+            _cycleStep(-1);
+          }
+        },
+        // --- TAP TO RESET ---
+        onTap: () {
+          setState(() {
+            _browsingStepIndex = -1; // Reset to live tracking
+          });
+          _recenterCamera(); // Snap camera back to user
+        },
+        child: GlassmorphicContainer(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        _navInstruction,
-                        textAlign: TextAlign.left,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          height: 1.2,
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          shape: BoxShape.circle,
                         ),
+                        child:
+                        Icon(icon, color: Colors.white, size: 42),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                          _distanceToNextManeuver,
-                          style: TextStyle(
-                              color: Colors.white.withOpacity(0.9),
-                              fontSize: 18,
-                              fontWeight: FontWeight.w500
-                          )
-                      ),
+                      if (directionAbbr.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          directionAbbr,
+                          style: const TextStyle(
+                            color: Colors.amber,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ]
                     ],
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: AnimatedBuilder(
-                animation: _progressAnimationController!,
-                builder: (context, child) {
-                  return LinearProgressIndicator(
-                    value: _progressAnimation?.value ?? _progressToNextManeuver,
-                    minHeight: 6,
-                    backgroundColor: Colors.white.withOpacity(0.2),
-                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
-                  );
-                },
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Browsing Indicator (Optional, helpful context)
+                        if (_browsingStepIndex != -1)
+                          Text(
+                            "PREVIEWING STEP ${displayIndex + 1} OF ${_navSteps.length}",
+                            style: TextStyle(
+                                color: Colors.amber.withOpacity(0.8),
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.0),
+                          ),
+                        Text(
+                          simplifiedInstruction,
+                          textAlign: TextAlign.left,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            height: 1.2,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(displayDistance,
+                            style: TextStyle(
+                                color: Colors.white.withOpacity(0.9),
+                                fontSize: 18,
+                                fontWeight: FontWeight.w500)),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
+              const SizedBox(height: 16),
+              // Only show progress bar if we are on the current live step
+              if (displayIndex == _currentStepIndex)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: AnimatedBuilder(
+                    animation: _progressAnimationController!,
+                    builder: (context, child) {
+                      return LinearProgressIndicator(
+                        value: _progressAnimation?.value ??
+                            _progressToNextManeuver,
+                        minHeight: 6,
+                        backgroundColor: Colors.white.withOpacity(0.2),
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                            Colors.white),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
 
+  void _cycleStep(int delta) {
+    setState(() {
+      // If we are currently "live" (index -1), start browsing from the current step
+      if (_browsingStepIndex == -1) {
+        _browsingStepIndex = _currentStepIndex;
+      }
+
+      int newIndex = _browsingStepIndex + delta;
+
+      // Clamp to bounds
+      if (newIndex < 0) newIndex = 0;
+      if (newIndex >= _navSteps.length) newIndex = _navSteps.length - 1;
+
+      _browsingStepIndex = newIndex;
+    });
+  }
   Widget _buildFuturisticBottomPanel() {
-    final arrivalTime = DateTime.now().add(Duration(seconds: _routes[_selectedRouteIndex].durationValue));
+    // FIX: Calculate Arrival Time based on Remaining Time (not total trip time)
+    final totalDurationSeconds = _routes[_selectedRouteIndex].durationValue;
+    final elapsedSeconds = _navigationStopwatch.elapsed.inSeconds;
+    final remainingSeconds = max(0, totalDurationSeconds - elapsedSeconds);
+
+    // Add REMAINING time to current time
+    final arrivalTime = DateTime.now().add(Duration(seconds: remainingSeconds));
     final timeFormat = DateFormat.jm();
 
     return Positioned(
@@ -1072,24 +1216,33 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                     children: [
                       Text(
                         timeFormat.format(arrivalTime),
-                        style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold),
                       ),
                       Row(
                         children: [
                           Text(
                             _navEta,
-                            style: const TextStyle(color: Colors.greenAccent, fontSize: 16, fontWeight: FontWeight.bold),
+                            style: const TextStyle(
+                                color: Colors.greenAccent,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold),
                           ),
                           Text(
                             " · $_navDistance",
-                            style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 16),
+                            style: TextStyle(
+                                color: Colors.white.withOpacity(0.7),
+                                fontSize: 16),
                           ),
                         ],
                       ),
                     ],
                   ),
                   IconButton(
-                    icon: Icon(_isMuted ? Icons.volume_off : Icons.volume_up, color: Colors.white),
+                    icon: Icon(_isMuted ? Icons.volume_off : Icons.volume_up,
+                        color: Colors.white),
                     onPressed: () {
                       setState(() => _isMuted = !_isMuted);
                       _saveMutePreference(_isMuted);
@@ -1099,9 +1252,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
               ),
             ),
           ),
-
           const SizedBox(width: 12),
-
           GestureDetector(
             onTap: _stopNavigation,
             child: Container(
@@ -1116,13 +1267,16 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                       blurRadius: 12,
                       offset: const Offset(0, 4),
                     )
-                  ]
-              ),
+                  ]),
               child: const Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(Icons.close, color: Colors.white, size: 28),
-                  Text("EXIT", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold))
+                  Text("EXIT",
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold))
                 ],
               ),
             ),
@@ -1883,11 +2037,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     final currentStep = _navSteps[_currentStepIndex];
     final totalStepDistance = currentStep['distance']['value'].toDouble();
 
-    // --- FIX: Use projected distance along path instead of air distance ---
+    // Calculate distance along the path for the current step
     final distanceInMeters = _calculateDistanceAlongPolyline(
-        currentUserPosition,
-        currentStep['polyline']['points']
-    );
+        currentUserPosition, currentStep['polyline']['points']);
 
     if (distanceInMeters < 30 && _currentStepIndex < _navSteps.length - 1) {
       setState(() {
@@ -1896,25 +2048,50 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       });
     }
 
-    final newProgress = (totalStepDistance - distanceInMeters) / totalStepDistance;
-    _progressAnimation = Tween<double>(begin: _progressToNextManeuver, end: newProgress.clamp(0.0, 1.0))
+    // --- PROGRESS BAR CALCULATION ---
+    final newProgress =
+        (totalStepDistance - distanceInMeters) / totalStepDistance;
+    _progressAnimation = Tween<double>(
+        begin: _progressToNextManeuver, end: newProgress.clamp(0.0, 1.0))
         .animate(_progressAnimationController!);
     _progressAnimationController!.forward(from: 0.0);
 
-    final totalDuration = Duration(seconds: _routes[_selectedRouteIndex].durationValue);
-    final remainingDuration = totalDuration - _navigationStopwatch.elapsed;
-    final timeRemainingStr = remainingDuration.inMinutes > 0
-        ? "${remainingDuration.inMinutes} min"
-        : "${remainingDuration.inSeconds} sec";
+    // --- FIX: CALCULATE TOTAL REMAINING DISTANCE & ETA ---
+    // 1. Sum up all future steps
+    double futureDistance = 0.0;
+    for (int i = _currentStepIndex + 1; i < _navSteps.length; i++) {
+      futureDistance += _navSteps[i]['distance']['value'];
+    }
+    // 2. Add current step remaining distance
+    double totalRemainingDistance = distanceInMeters + futureDistance;
 
+    // 3. Format Distance String
+    String newDistanceString = totalRemainingDistance < 1000
+        ? "${totalRemainingDistance.toStringAsFixed(0)} m"
+        : "${(totalRemainingDistance / 1000).toStringAsFixed(1)} km";
+
+    // 4. Calculate Remaining Time (Countdown)
+    final totalDurationSeconds = _routes[_selectedRouteIndex].durationValue;
+    final elapsedSeconds = _navigationStopwatch.elapsed.inSeconds;
+    final remainingSeconds = max(0, totalDurationSeconds - elapsedSeconds);
+    final remainingDuration = Duration(seconds: remainingSeconds);
+
+    String newEtaString = remainingDuration.inHours > 0
+        ? "${remainingDuration.inHours} hr ${remainingDuration.inMinutes % 60} min"
+        : "${remainingDuration.inMinutes} min";
 
     setState(() {
       _distanceToNextManeuver = distanceInMeters < 1000
           ? "${distanceInMeters.toStringAsFixed(0)} m"
           : "${(distanceInMeters / 1000).toStringAsFixed(1)} km";
       _progressToNextManeuver = newProgress.clamp(0.0, 1.0);
+
+      // Update the main UI variables
+      _navDistance = newDistanceString;
+      _navEta = newEtaString;
     });
 
+    // --- POLYLINE UPDATES (Travelled vs Remaining) ---
     final fullRoute = _routes[_selectedRouteIndex].polylinePoints;
     int closestIndex = _findClosestPointIndex(currentUserPosition, fullRoute);
 
@@ -1924,20 +2101,20 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
       Set<Polyline> updatedPolylines = {};
 
-      // Grey Line (Travelled)
       updatedPolylines.add(Polyline(
         polylineId: const PolylineId('travelled_path'),
         points: travelledPoints,
         color: Colors.grey,
         width: 8,
+        zIndex: 1,
       ));
 
-      // Blue Line (Remaining)
       updatedPolylines.add(Polyline(
         polylineId: const PolylineId('remaining_path'),
         points: remainingPoints,
-        color: Colors.blueAccent, // Or use your theme color
+        color: Colors.blueAccent,
         width: 8,
+        zIndex: 2,
       ));
 
       setState(() {
@@ -1949,10 +2126,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     NotificationService().showNavigationNotification(
         destination: _destination?.name ?? 'your destination',
         eta: _navEta,
-        timeRemaining: timeRemainingStr,
+        timeRemaining: newEtaString,
         nextTurn: _navInstruction,
         maneuverIcon: _navManeuverIcon);
-
   }
 
   int _findClosestPointIndex(LatLng userPos, List<LatLng> path) {
@@ -1974,13 +2150,28 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   void _updateNavInstruction() {
     if (_navSteps.isEmpty || _currentStepIndex >= _navSteps.length) return;
     final currentStep = _navSteps[_currentStepIndex];
-    final instruction = _stripHtmlIfNeeded(currentStep['html_instructions']);
+
+    // 1. Get the full clean text
+    String fullInstruction =
+    _stripHtmlIfNeeded(currentStep['html_instructions']);
+    String simplifiedInstruction = fullInstruction;
+
+    // 2. Parse for Street Name (text after "on" or "onto")
+    RegExp exp = RegExp(r'\b(on|onto)\s+(.*)', caseSensitive: false);
+    Match? match = exp.firstMatch(fullInstruction);
+    if (match != null && match.groupCount >= 2) {
+      // Use the captured text after the preposition
+      simplifiedInstruction = match.group(2) ?? fullInstruction;
+    }
+
     setState(() {
-      _navInstruction = instruction;
+      _navInstruction = simplifiedInstruction; // Show simplified text on screen
       _navManeuverIcon = _getManeuverIcon(currentStep['maneuver']);
     });
+
     if (_navigationStarted) {
-      _speak(_navInstruction);
+      // Speak the FULL instruction so the user hears "Turn left..."
+      _speak(fullInstruction);
     }
   }
 
