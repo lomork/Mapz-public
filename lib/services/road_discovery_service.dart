@@ -223,7 +223,6 @@ class RoadDiscoveryService {
         });
   }
 
-  // --- NEW: Method to stop the service ---
   void stopDiscovery() {
     _location.enableBackgroundMode(enable: false);
     _locationSubscription?.cancel();
@@ -236,30 +235,33 @@ class RoadDiscoveryService {
 
   Future<void> _snapAndStorePath(List<LatLng> path) async {
     try {
-      // 1. Snap the raw GPS points to the road network
       final result = await _apiService.snapToRoads(path);
 
       if (result.containsKey('snappedPoints')) {
-        // 2. Determine the Country for this batch
-        // We use the first point in the batch to check the country.
-        // This avoids paying for a reverse geocode on every single point.
         String batchCountry = 'Unknown';
+        String batchCity = 'Unknown';
+        String batchState = 'Unknown';
+
         if (path.isNotEmpty) {
           try {
             final geocodeResult = await _apiService.reverseGeocode(path.first);
             if (geocodeResult['status'] == 'OK' && geocodeResult['results'].isNotEmpty) {
               final List components = geocodeResult['results'][0]['address_components'];
-              // Find the component with type 'country'
-              final countryComponent = components.firstWhere(
-                      (c) => (c['types'] as List).contains('country'),
-                  orElse: () => null
-              );
-              if (countryComponent != null) {
-                batchCountry = countryComponent['long_name']; // e.g., "Canada"
-              }
+
+              // Extract Country
+              final countryComp = components.firstWhere((c) => (c['types'] as List).contains('country'), orElse: () => null);
+              if (countryComp != null) batchCountry = countryComp['long_name'];
+
+              // Extract City (Locality)
+              final cityComp = components.firstWhere((c) => (c['types'] as List).contains('locality'), orElse: () => null);
+              if (cityComp != null) batchCity = cityComp['long_name'];
+
+              // Extract State (Admin Area 1)
+              final stateComp = components.firstWhere((c) => (c['types'] as List).contains('administrative_area_level_1'), orElse: () => null);
+              if (stateComp != null) batchState = stateComp['long_name'];
             }
           } catch (geoError) {
-            print("Error determining country for batch: $geoError");
+            print("Error determining location details: $geoError");
           }
         }
 
@@ -272,7 +274,9 @@ class RoadDiscoveryService {
                 placeId: placeId,
                 latitude: point['location']['latitude'],
                 longitude: point['location']['longitude'],
-                country: batchCountry, // <--- Save the detected country
+                country: batchCountry,
+                city: batchCity,
+                state: batchState,
               ),
             );
           }
@@ -280,14 +284,72 @@ class RoadDiscoveryService {
 
         if (newRoads.isNotEmpty) {
           await _dbService.insertRoads(newRoads);
-          print("Saved ${newRoads.length} new road segments for $batchCountry.");
+          print("Saved ${newRoads.length} segments for $batchCity, $batchCountry.");
         }
       }
     } catch (e) {
       print("Error in _snapAndStorePath: $e");
     }
   }
-  // Calculates the discovery percentage
+
+  Future<List<Map<String, dynamic>>> getVisitedCountries() async {
+    final rawStats = await _dbService.getCountryStats();
+    return rawStats.map((stat) {
+      final String country = stat['country'];
+      final int count = stat['count'];
+      final int total = _totalRoadsData[country] ?? 1000000;
+      final double percentage = (count / total).clamp(0.0, 1.0);
+      return {
+        'name': country,
+        'count': count,
+        'percentage': percentage,
+      };
+    }).toList();
+  }
+
+  Future<List<Map<String, dynamic>>> getVisitedStates(String country) async {
+    final rawStats = await _dbService.getStateStats(country);
+    return rawStats.map((stat) {
+      final String state = stat['state'];
+      final int count = stat['count'];
+      // Heuristic: Average state has ~100k segments?
+      // You can refine this map later.
+      final int estimatedTotal = 100000;
+      final double percentage = (count / estimatedTotal).clamp(0.0, 1.0);
+      return {
+        'name': state,
+        'count': count,
+        'percentage': percentage,
+      };
+    }).toList();
+  }
+
+  Future<List<Map<String, dynamic>>> getVisitedCities(String country, String state) async {
+    final rawStats = await _dbService.getCityStats(country, state);
+    return rawStats.map((stat) {
+      final String city = stat['city'];
+      final int count = stat['count'];
+      final int estimatedTotal = _estimateTotalRoadsForCity(city);
+      final double percentage = (count / estimatedTotal).clamp(0.0, 1.0);
+      return {
+        'name': city,
+        'count': count,
+        'percentage': percentage,
+      };
+    }).toList();
+  }
+
+  int _estimateTotalRoadsForCity(String city) {
+    // You can add specific overrides here if you want
+    switch (city.toLowerCase()) {
+      case 'toronto': return 25000;
+      case 'new york': return 30000;
+      case 'halifax': return 6000;
+      case 'north york': return 8000;
+      default: return 5000; // Default generic city size (segments)
+    }
+  }
+
   Future<double> calculateDiscoveryPercentage(String country) async {
 
     final totalRoadsInCountry = _totalRoadsData[country] ?? 1000000;
@@ -397,13 +459,10 @@ class RoadDiscoveryService {
       print("Buffer is empty, nothing to process.");
       return;
     }
-
-    // Copy the buffer and clear it, just like the automatic batching
     final List<LatLng> pathToProcess = List.from(_pathBuffer);
     _pathBuffer.clear();
 
     print("Forcing processing of ${pathToProcess.length} buffered points.");
-    // Process the path in the background
     await _snapAndStorePath(pathToProcess);
   }
 }

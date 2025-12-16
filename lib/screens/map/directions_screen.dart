@@ -158,6 +158,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   Animation<double>? _rotationAnimation;
   LatLng? _previousLocation;
   double _previousRotation = 0.0;
+  double _lastCameraBearing = 0.0;
   bool _isMovingCameraProgrammatically = false;
 
   int _fastestRouteIndex = 0;
@@ -177,6 +178,16 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   Timer? _offRouteCheckTimer;
 
   int _browsingStepIndex = -1;
+
+  bool _isTripFinished = false;
+  DateTime? _actualTripStartTime;
+  DateTime? _tripEndTime;
+  String _originalEtaText = ""; // To compare with actual
+  double _totalDistanceTraveledMeters = 0.0; // Track actual distance driven
+  final List<double> _speedSamples = []; // To calc average speed
+  Timer? _autoCompleteTimer;
+  int _autoCompleteSeconds = 10;
+  bool _isSavingTrip = false;
 
   String _getDirectionAbbreviation(String instruction) {
     final lower = instruction.toLowerCase();
@@ -201,6 +212,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       duration: const Duration(milliseconds: 1000),
       vsync: this,
     );
+    _markerAnimationController?.addListener(() {
+      if (mounted) setState(() {});
+    });
     _progressAnimationController = AnimationController(
       duration: const Duration(milliseconds: 500),
       vsync: this,
@@ -235,6 +249,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
   @override
   void dispose() {
+    _autoCompleteTimer?.cancel();
     _offRouteCheckTimer?.cancel();
     _navigationLocationSubscription?.cancel();
     _flutterTts.stop();
@@ -693,6 +708,25 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           markerId: const MarkerId('destination'),
           position: _destination!.coordinates),
     };
+
+    if (_markerAnimationController != null) {
+      LatLng pos = _positionAnimation?.value ?? _lastLocation ?? widget.originCoordinates;
+      double rot = _rotationAnimation?.value ?? _currentUserRotation;
+
+      // Normalize rotation for display (0-360)
+      rot = (rot % 360 + 360) % 360;
+
+      _markers.add(Marker(
+        markerId: const MarkerId('user_navigation_marker'),
+        position: pos,
+        rotation: rot,
+        icon: _navigationMarkerIcon ?? BitmapDescriptor.defaultMarker,
+        anchor: const Offset(0.5, 0.5),
+        flat: true,
+        zIndex: 100,
+      ));
+    }
+
     Set<Polyline> newPolylines = {};
 
     final bool hasRoutes =
@@ -702,31 +736,27 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final Color routeColor =
     isDarkMode ? Colors.greenAccent : Colors.blueAccent;
-    // Define the color for inactive/alternative routes
     final Color alternativeRouteColor = Colors.grey;
 
     if (hasRoutes) {
       if (!isTransit) {
-        // --- 1. Draw Alternative Routes (Non-Selected) first ---
         for (int i = 0; i < _routes.length; i++) {
-          if (i == _selectedRouteIndex) continue; // Skip the selected route for now
+          if (i == _selectedRouteIndex) continue;
 
           newPolylines.add(Polyline(
             polylineId: PolylineId('route_alt_$i'),
             points: _routes[i].polylinePoints,
             color: alternativeRouteColor,
-            width: 6,
-            zIndex: 0, // Draw behind the selected route
-            consumeTapEvents: true, // Allow tapping
-            onTap: () => _onRouteTapped(i), // Switch to this route on tap
+            width: 9,
+            zIndex: 0,
+            consumeTapEvents: true,
+            onTap: () => _onRouteTapped(i),
           ));
         }
 
-        // --- 2. Draw Selected Route on Top ---
         List<LatLng> points = _routes[_selectedRouteIndex].polylinePoints;
         switch (_travelMode) {
           case TravelMode.driving:
-          // _createTrafficPolylines now sets zIndex to 1
             newPolylines.addAll(
                 _createTrafficPolylines(_routes[_selectedRouteIndex].steps));
             break;
@@ -754,11 +784,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
             break;
         }
       } else {
-        // --- Transit Logic ---
-        // Draw alternative transit routes (simplified lines)
         for (int i = 0; i < _transitRoutes.length; i++) {
           if (i == _selectedRouteIndex) continue;
-          // For alternatives, we might just draw lines for each step in grey
           for (var step in _transitRoutes[i].steps) {
             newPolylines.add(Polyline(
               polylineId: PolylineId('transit_alt_${i}_step_${step.hashCode}'),
@@ -771,8 +798,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
             ));
           }
         }
-
-        // Draw selected transit route
         if (_detailedRoute != null) {
           for (var step in _detailedRoute!.steps) {
             newPolylines.add(Polyline(
@@ -799,7 +824,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       _polylines.addAll(newPolylines);
     });
 
-    // Only move camera if we are not navigating and the controller is ready
     if (hasRoutes && _isMapControllerInitialized && !_isNavigating) {
       List<LatLng> fullRouteForBounds = isTransit
           ? _transitRoutes[_selectedRouteIndex]
@@ -1933,7 +1957,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
           _updateNavigationMarkers();
           if (!_isRecalculating) {
-            _updateNavigationState(newLatLng);
+            _updateNavigationState(newLatLng, newRotation);
           }
         });
   }
@@ -2031,13 +2055,78 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     await _getDirections();
   }
 
-  void _updateNavigationState(LatLng currentUserPosition) {
+  void _updateNavigationState(LatLng currentUserPosition, double heading) {
     if (_navSteps.isEmpty) return;
+
+    if (_previousLocation == null) {
+      setState(() {
+        _lastLocation = currentUserPosition;
+        _currentUserRotation = heading;
+        _previousLocation = currentUserPosition;
+        _previousRotation = heading;
+      });
+    } else {
+      _markerAnimationController?.reset();
+
+      // Animate Position
+      _positionAnimation = LatLngTween(
+          begin: _previousLocation!,
+          end: currentUserPosition
+      ).animate(CurvedAnimation(
+        parent: _markerAnimationController!,
+        curve: Curves.linear,
+      ));
+
+      double startRotation = _previousRotation;
+      double endRotation = heading;
+
+      double diff = endRotation - startRotation;
+      if (diff > 180) endRotation -= 360;
+      if (diff < -180) endRotation += 360;
+
+      _rotationAnimation = Tween<double>(
+          begin: startRotation,
+          end: endRotation
+      ).animate(CurvedAnimation(
+        parent: _markerAnimationController!,
+        curve: Curves.easeInOut,
+      ));
+
+      _markerAnimationController?.forward();
+
+      _previousLocation = currentUserPosition;
+      _previousRotation = heading;
+    }
+
+    if (_isCameraLocked && _isMapControllerInitialized) {
+      double bearingToUse = _lastCameraBearing;
+
+      double diff = (heading - _lastCameraBearing).abs();
+      if (diff > 180) diff = 360 - diff;
+      bool shouldUpdateBearing = diff > 10.0;
+
+      if (_travelMode == TravelMode.driving) {
+        shouldUpdateBearing = diff > 15.0;
+      }
+
+      if (shouldUpdateBearing) {
+        bearingToUse = heading;
+        _lastCameraBearing = heading;
+      }
+
+      mapController.animateCamera(CameraUpdate.newCameraPosition(
+        CameraPosition(
+          target: currentUserPosition,
+          zoom: _currentZoom,
+          bearing: bearingToUse,
+          tilt: _travelMode == TravelMode.driving ? 50.0 : 0.0,
+        ),
+      ));
+    }
 
     final currentStep = _navSteps[_currentStepIndex];
     final totalStepDistance = currentStep['distance']['value'].toDouble();
 
-    // Calculate distance along the path for the current step
     final distanceInMeters = _calculateDistanceAlongPolyline(
         currentUserPosition, currentStep['polyline']['points']);
 
@@ -2048,7 +2137,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       });
     }
 
-    // --- PROGRESS BAR CALCULATION ---
     final newProgress =
         (totalStepDistance - distanceInMeters) / totalStepDistance;
     _progressAnimation = Tween<double>(
@@ -2056,21 +2144,16 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         .animate(_progressAnimationController!);
     _progressAnimationController!.forward(from: 0.0);
 
-    // --- FIX: CALCULATE TOTAL REMAINING DISTANCE & ETA ---
-    // 1. Sum up all future steps
     double futureDistance = 0.0;
     for (int i = _currentStepIndex + 1; i < _navSteps.length; i++) {
       futureDistance += _navSteps[i]['distance']['value'];
     }
-    // 2. Add current step remaining distance
     double totalRemainingDistance = distanceInMeters + futureDistance;
 
-    // 3. Format Distance String
     String newDistanceString = totalRemainingDistance < 1000
         ? "${totalRemainingDistance.toStringAsFixed(0)} m"
         : "${(totalRemainingDistance / 1000).toStringAsFixed(1)} km";
 
-    // 4. Calculate Remaining Time (Countdown)
     final totalDurationSeconds = _routes[_selectedRouteIndex].durationValue;
     final elapsedSeconds = _navigationStopwatch.elapsed.inSeconds;
     final remainingSeconds = max(0, totalDurationSeconds - elapsedSeconds);
@@ -2086,12 +2169,10 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           : "${(distanceInMeters / 1000).toStringAsFixed(1)} km";
       _progressToNextManeuver = newProgress.clamp(0.0, 1.0);
 
-      // Update the main UI variables
       _navDistance = newDistanceString;
       _navEta = newEtaString;
     });
 
-    // --- POLYLINE UPDATES (Travelled vs Remaining) ---
     final fullRoute = _routes[_selectedRouteIndex].polylinePoints;
     int closestIndex = _findClosestPointIndex(currentUserPosition, fullRoute);
 
@@ -2135,8 +2216,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     int minIndex = -1;
     double minDst = double.infinity;
 
-    // Optimization: Only search a subset around expected location if path is huge
-    // For now, simple search is fine for standard routes
     for (int i = 0; i < path.length; i++) {
       double dst = _calculateDistance(userPos.latitude, userPos.longitude, path[i].latitude, path[i].longitude);
       if (dst < minDst) {
@@ -2151,12 +2230,10 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     if (_navSteps.isEmpty || _currentStepIndex >= _navSteps.length) return;
     final currentStep = _navSteps[_currentStepIndex];
 
-    // 1. Get the full clean text
     String fullInstruction =
     _stripHtmlIfNeeded(currentStep['html_instructions']);
     String simplifiedInstruction = fullInstruction;
 
-    // 2. Parse for Street Name (text after "on" or "onto")
     RegExp exp = RegExp(r'\b(on|onto)\s+(.*)', caseSensitive: false);
     Match? match = exp.firstMatch(fullInstruction);
     if (match != null && match.groupCount >= 2) {

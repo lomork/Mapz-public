@@ -57,7 +57,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
 
   bool _isProfileMenuVisible = false;
   bool _isAdaptiveDiscoveryEnabled = true;
-
+  bool _is3DBuildingsEnabled = false;
   AppTheme _currentTheme = AppTheme.automatic;
   String _darkMapStyle = '';
   String _lightMapStyle = '';
@@ -75,8 +75,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
   PlaceDetails? _selectedPlace;
 
   BitmapDescriptor? _userMarkerIcon;
-  final Map<String, BitmapDescriptor> _vehicleMarkers = {};
-  String _selectedVehicleKey = 'sedan';
 
   LatLng? _previousLatLng;
   double _previousRotation = 0.0;
@@ -111,9 +109,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
   void initState() {
     super.initState();
     _markerAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 1000),
       vsync: this,
     );
+    _markerAnimationController!.addListener(() {
+      if (mounted) setState(() {});
+    });
     _initializeMapAndLocation();
     _initTts();
     _searchFocusNode.addListener(_onSearchFocusChange);
@@ -172,7 +173,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
 
   Future<void> _initializeMapAndLocation() async {
     _userMarkerIcon = await _getResizedMarkerIcon('assets/images/UserLocation.png', 150);
-    await _loadVehicleMarkers();
+    await _loadMapSettings();
     await _loadMapStyles();
     await _initLocationServices();
     themeNotifier.addListener(_updateMapStyle);
@@ -180,20 +181,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     await _loadSavedPlaces();
   }
 
-  Future<void> _loadVehicleMarkers() async {
+  Future<void> _loadMapSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    _selectedVehicleKey = prefs.getString('selectedVehicle') ?? 'sedan';
-
-    _vehicleMarkers['sedan'] = await _createVehicleMarkerBitmap(Icons.directions_car);
-    _vehicleMarkers['suv'] = await _createVehicleMarkerBitmap(Icons.directions_car_filled);
-    _vehicleMarkers['truck'] = await _createVehicleMarkerBitmap(Icons.fire_truck);
-    _vehicleMarkers['ev'] = await _createVehicleMarkerBitmap(Icons.electric_car);
-
-    if (mounted) {
-      setState(() {});
-    }
+    setState(() {
+      _is3DBuildingsEnabled = prefs.getBool('show_3d_buildings') ?? false;
+    });
   }
-
 
   Future<void> _initLocationServices() async {
     var locationService = Location();
@@ -206,21 +199,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     } else {
       debugPrint("Location permission not granted in MapScreen");
     }
-  }
-
-  void _updateUserMarker() {
-    if (_currentUserLatLng == null) return;
-    final marker = Marker(
-      markerId: const MarkerId('userLocation'),
-      position: _currentUserLatLng!,
-      icon: _userMarkerIcon!,
-      rotation: _currentUserRotation,
-      anchor: const Offset(0.5, 0.5),
-      flat: true,
-      zIndex: 2.0,
-    );
-    _markers.removeWhere((m) => m.markerId.value == 'userLocation');
-    _markers.add(marker);
   }
 
   Future<void> _listenToLocationChanges() async {
@@ -284,11 +262,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
       return;
     }
 
-    setState(() {
-      _currentUserLatLng = newLatLng;
-      _currentUserRotation = newRotation;
-    });
-
     _positionAnimation = LatLngTween(begin: _previousLatLng!, end: newLatLng)
         .animate(_markerAnimationController!);
 
@@ -299,6 +272,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
       _previousLatLng = newLatLng;
       _previousRotation = newRotation;
     });
+
+    _currentUserLatLng = newLatLng;
+    _currentUserRotation = newRotation;
 
     if (_isFollowingUser) {
       mapController.animateCamera(CameraUpdate.newCameraPosition(
@@ -489,7 +465,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
   Future<void> _handleMapTap(LatLng position) async {
     final mapProvider = context.read<MapProvider>();
 
-    // 1. Handle Taps While Searching: Stop search, do nothing else.
+    // 1. Cancel search if active
     if (mapProvider.isSearching) {
       _searchFocusNode.unfocus();
       mapProvider.stopSearch(_searchFocusNode, _searchController);
@@ -501,61 +477,58 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
       final result = await apiService.reverseGeocode(position);
 
       if (result['status'] == 'OK' && result['results'].isNotEmpty) {
-        final results = result['results'] as List;
-        dynamic targetPlace;
+        final topResult = result['results'][0];
+        final List<dynamic> types = topResult['types'] ?? [];
+        final isPoi = types.any((t) => [
+          'point_of_interest',
+          'establishment',
+          'park',
+          'tourist_attraction',
+          'restaurant',
+          'store',
+          'lodging',
+          'museum',
+          'place_of_worship',
+          'school',
+          'university',
+          'hospital'
+        ].contains(t));
 
-        // 2. PRIORITY SEARCH: Look for a specific POI (Establishment) FIRST
-        // We iterate through ALL results looking for a business/landmark.
-        targetPlace = results.firstWhere((p) {
-          final List<dynamic> types = p['types'] ?? [];
-          return types.any((t) => [
-            'establishment',
-            'point_of_interest',
-            'premise',
-            'park',
-            'tourist_attraction',
-            'restaurant',
-            'store',
-            'lodging',
-            'school',
-            'museum',
-            'place_of_worship'
-          ].contains(t));
-        }, orElse: () => null);
+        final isGeneric = types.any((t) => [
+          'street_address',
+          'route',
+          'premise',
+          'subpremise',
+          'locality',
+          'political',
+          'administrative_area_level_1',
+          'administrative_area_level_2',
+          'neighborhood'
+        ].contains(t));
 
-        // 3. If NO POI found, check if we should ignore it.
-        // If targetPlace is null, it means we only found addresses/streets.
-        // You requested to IGNORE empty space/streets.
+        if (isPoi && !isGeneric) {
+          final String placeId = topResult['place_id'];
+          String description = topResult['formatted_address'];
 
-        if (targetPlace != null) {
-          // Found a valid POI!
-          final String placeId = targetPlace['place_id'];
-          String description = targetPlace['formatted_address'];
-
-          // Try to get the short name
-          if (targetPlace.containsKey('address_components') && targetPlace['address_components'] is List) {
-            final components = targetPlace['address_components'] as List;
-            if (components.isNotEmpty) {
-              description = components[0]['long_name'];
-            }
+          // Try to get a shorter name if available
+          if (topResult.containsKey('address_components')) {
           }
 
           await mapProvider.selectPlace(placeId, description);
+
           if (mapProvider.selectedPlace != null) {
             mapController.animateCamera(
                 CameraUpdate.newLatLngZoom(mapProvider.selectedPlace!.coordinates, 16)
             );
           }
         } else {
-          // Only found generic addresses (streets, routes, localities). Ignore.
-          debugPrint("Tap ignored: No POI found. Closest result was generic: ${results.first['types']}");
+          debugPrint("Tap ignored. Type was generic: $types");
         }
       }
     } catch (e) {
-      debugPrint("Failed to get place from tap: $e");
+      debugPrint("Failed to handle map tap: $e");
     }
   }
-
   Future<void> _loadSearchHistory() async {
     final prefs = await SharedPreferences.getInstance();
     final historyJson = prefs.getStringList('searchHistory') ?? [];
@@ -768,6 +741,19 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                     },
                     secondary: const Icon(Icons.traffic),
                   ),
+                  SwitchListTile(
+                    title: const Text('3D Buildings'),
+                    value: _is3DBuildingsEnabled,
+                    onChanged: (bool value) async {
+                      setDialogState(() {
+                        _is3DBuildingsEnabled = value;
+                      });
+                      setState(() {});
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.setBool('show_3d_buildings', value);
+                    },
+                    secondary: const Icon(Icons.location_city),
+                  ),
                 ],
               ),
               actions: [
@@ -956,106 +942,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     );
   }
 
-  Future<BitmapDescriptor> _createVehicleMarkerBitmap(IconData icon) async {
-    final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
-    final Canvas canvas = Canvas(pictureRecorder);
-    final size = 120.0;
-    final iconColor = Colors.white;
-    final backgroundColor = Colors.blue;
-
-    final backgroundPaint = Paint()..color = backgroundColor;
-
-    final path = Path()
-      ..moveTo(size / 2, size)
-      ..arcTo(Rect.fromCircle(center: Offset(size / 2, size / 2), radius: size / 2), pi, -pi, false)
-      ..close();
-
-    canvas.drawPath(path, backgroundPaint);
-
-    final textPainter = TextPainter(textDirection: ui.TextDirection.ltr);
-    textPainter.text = TextSpan(
-      text: String.fromCharCode(icon.codePoint),
-      style: TextStyle(
-        fontSize: size * 0.6,
-        fontFamily: icon.fontFamily,
-        color: iconColor,
-      ),
-    );
-    textPainter.layout();
-    textPainter.paint(canvas, Offset((size - textPainter.width) / 2, (size - textPainter.height) / 2));
-
-    final img = await pictureRecorder.endRecording().toImage(size.toInt(), size.toInt());
-    final data = await img.toByteData(format: ui.ImageByteFormat.png);
-    return BitmapDescriptor.fromBytes(data!.buffer.asUint8List());
-  }
-
-  void _showMarkerSelectionDialog() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Choose Your Vehicle'),
-          content: Wrap(
-            spacing: 16,
-            runSpacing: 16,
-            alignment: WrapAlignment.center,
-            children: _vehicleMarkers.entries.map((entry) {
-              final key = entry.key;
-              final descriptor = entry.value;
-              return GestureDetector(
-                onTap: () async {
-                  final prefs = await SharedPreferences.getInstance();
-                  await prefs.setString('selectedVehicle', key);
-                  setState(() {
-                    _selectedVehicleKey = key;
-                    _userMarkerIcon = descriptor;
-                  });
-                  Navigator.of(context).pop();
-                },
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: _selectedVehicleKey == key ? Colors.blue.withOpacity(0.2) : Colors.transparent,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: _selectedVehicleKey == key ? Colors.blue : Colors.grey,
-                          ),
-                        ),
-                        child: Image.asset('assets/images/${key}_icon.png', width: 48, height: 48, // Placeholder
-                          errorBuilder: (context, error, stackTrace) {
-                            // In a real app you'd convert the BitmapDescriptor back to a widget
-                            // For simplicity, we just show the icon
-                            return Icon(
-                                key == 'sedan' ? Icons.directions_car :
-                                key == 'suv' ? Icons.directions_car_filled :
-                                key == 'truck' ? Icons.fire_truck : Icons.electric_car,
-                                size: 48,
-                                color: Colors.blue
-                            );
-                          },
-                        )
-                    ),
-                    const SizedBox(height: 4),
-                    Text(key[0].toUpperCase() + key.substring(1)),
-                  ],
-                ),
-              );
-            }).toList(),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -1068,40 +954,42 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     return Scaffold(
       body: Stack(
         children: <Widget>[
-      AnimatedBuilder(
-      animation: _markerAnimationController!,
-          builder: (context, _) {
-            return GoogleMap(
-              onMapCreated: (controller) {
-                mapController = controller;
-                _isMapControllerInitialized = true;
-                _updateMapStyle();
-                _restoreLastCameraPosition();
-              },
-              initialCameraPosition: CameraPosition(
-                  target: _center, zoom: _currentZoom),
+          GoogleMap(
+            key: const ValueKey("GoogleMapMain"),
+            onMapCreated: (controller) {
+              mapController = controller;
+              _isMapControllerInitialized = true;
+              _updateMapStyle();
+              _restoreLastCameraPosition();
+            },
+            initialCameraPosition: CameraPosition(
+                target: _center, zoom: _currentZoom),
 
-              onCameraMove: (CameraPosition position) {
-                _currentZoom = position.zoom;
-                _currentCameraPosition = position;
-              },
+            onCameraMove: (CameraPosition position) {
+              _currentZoom = position.zoom;
+              _currentCameraPosition = position;
+            },
 
-              onCameraIdle: () {
-                _saveCameraPosition();
-              },
+            onCameraIdle: () {
+              _saveCameraPosition();
+            },
 
-              markers: _buildMarkers(mapProvider),
-              myLocationButtonEnabled: false,
-              myLocationEnabled: false,
-              zoomControlsEnabled: false,
-              onTap: _handleMapTap,
+            markers: _buildMarkers(mapProvider),
+            myLocationButtonEnabled: false,
+            myLocationEnabled: false,
+            zoomControlsEnabled: false,
 
-              onLongPress: (pos) => _showMarkerSelectionDialog(),
-              mapType: _currentMapType,
-              trafficEnabled: _isTrafficEnabled,
-            );
-          }
-      ),
+            // [FIX] Move compass/logo down below the top bar (approx 50 (top) + 58 (height) + buffer)
+            padding: const EdgeInsets.only(top: 120.0),
+
+            // [FIX] 3D buildings toggle
+            buildingsEnabled: _is3DBuildingsEnabled,
+
+            onTap: _handleMapTap,
+
+            mapType: _currentMapType,
+            trafficEnabled: _isTrafficEnabled,
+          ),
 
           if (mapProvider.selectedPlace != null)
             DraggableScrollableSheet(

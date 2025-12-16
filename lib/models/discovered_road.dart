@@ -5,17 +5,19 @@ class DiscoveredRoad {
   final double latitude;
   final double longitude;
   final String country;
+  final String city;
+  final String state;
 
   DiscoveredRoad({
     this.id,
     required this.placeId,
     required this.latitude,
     required this.longitude,
-    required this.country,
+    this.country = 'Unknown',
+    this.city = 'Unknown',
+    this.state = 'Unknown',
   });
 
-  // Convert a DiscoveredRoad into a Map.
-  // The keys must correspond to the column names in database_service.dart.
   Map<String, dynamic> toMap() {
     return {
       'id': id,
@@ -23,10 +25,11 @@ class DiscoveredRoad {
       'latitude': latitude,
       'longitude': longitude,
       'country': country,
+      'city': city,
+      'state': state,
     };
   }
 
-  // A factory constructor to create a DiscoveredRoad from a map
   factory DiscoveredRoad.fromMap(Map<String, dynamic> map) {
     return DiscoveredRoad(
       id: map['id'],
@@ -34,6 +37,8 @@ class DiscoveredRoad {
       latitude: map['latitude'],
       longitude: map['longitude'],
       country: map['country'] ?? 'Unknown',
+      city: map['city'] ?? 'Unknown',
+      state: map['state'] ?? 'Unknown',
     );
   }
 

@@ -20,6 +20,7 @@ import '../auth/sign_up_screen.dart';
 import '../../providers/settings_provider.dart';
 import '../profile/friends/friends_screen.dart';
 import 'travel_history_screen.dart';
+import '../discovery/city_discovery_screen.dart';
 
 import 'accessibility_screen.dart';
 
@@ -499,6 +500,16 @@ class _LoggedInProfileScreenState extends State<LoggedInProfileScreen> with Auto
                     Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => const TravelHistoryScreen(),
                     ));
+                  },
+                ),
+                const SizedBox(height: 24),
+                ListTile(
+                  leading:const Icon(Icons.map_outlined),
+                  title: const Text("Road Discoveriez"),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const RoadDiscoveriezScreen()),
+                    );
                   },
                 ),
                 const SizedBox(height: 24),
