@@ -745,10 +745,41 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                     title: const Text('3D Buildings'),
                     value: _is3DBuildingsEnabled,
                     onChanged: (bool value) async {
+                      // 1. Update the switch UI immediately
                       setDialogState(() {
                         _is3DBuildingsEnabled = value;
                       });
+
+                      // 2. Update the Map Screen UI
                       setState(() {});
+
+                      // 3. IMPORTANT: Apply Tilt and Zoom if enabling
+                      if (value && _isMapControllerInitialized && _currentCameraPosition != null) {
+                        // Check if we need to zoom in or tilt
+                        double targetZoom = _currentCameraPosition!.zoom < 16.0 ? 17.0 : _currentCameraPosition!.zoom;
+                        double targetTilt = _currentCameraPosition!.tilt < 30.0 ? 45.0 : _currentCameraPosition!.tilt;
+
+                        mapController.animateCamera(CameraUpdate.newCameraPosition(
+                            CameraPosition(
+                              target: _currentCameraPosition!.target,
+                              zoom: targetZoom,
+                              tilt: targetTilt, // <--- THIS MAKES BUILDINGS VISIBLE
+                              bearing: _currentCameraPosition!.bearing,
+                            )
+                        ));
+                      } else if (!value && _isMapControllerInitialized && _currentCameraPosition != null) {
+                        // Optional: Flatten the map back out when disabling
+                        mapController.animateCamera(CameraUpdate.newCameraPosition(
+                            CameraPosition(
+                              target: _currentCameraPosition!.target,
+                              zoom: _currentCameraPosition!.zoom,
+                              tilt: 0.0, // Go back to top-down view
+                              bearing: _currentCameraPosition!.bearing,
+                            )
+                        ));
+                      }
+
+                      // 4. Save Preference
                       final prefs = await SharedPreferences.getInstance();
                       await prefs.setBool('show_3d_buildings', value);
                     },
@@ -767,7 +798,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
       },
     );
   }
-
   Widget _buildLayerOption(
       IconData icon, String label, bool isSelected, VoidCallback onTap) {
     return GestureDetector(

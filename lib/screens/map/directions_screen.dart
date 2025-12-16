@@ -179,15 +179,14 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
   int _browsingStepIndex = -1;
 
-  bool _isTripFinished = false;
+  bool _isArrived = false;
+  Timer? _arrivalTimer;
+  int _arrivalCountdown = 10;
   DateTime? _actualTripStartTime;
-  DateTime? _tripEndTime;
   String _originalEtaText = ""; // To compare with actual
   double _totalDistanceTraveledMeters = 0.0; // Track actual distance driven
   final List<double> _speedSamples = []; // To calc average speed
   Timer? _autoCompleteTimer;
-  int _autoCompleteSeconds = 10;
-  bool _isSavingTrip = false;
 
   String _getDirectionAbbreviation(String instruction) {
     final lower = instruction.toLowerCase();
@@ -249,6 +248,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
   @override
   void dispose() {
+    _arrivalTimer?.cancel();
     _autoCompleteTimer?.cancel();
     _offRouteCheckTimer?.cancel();
     _navigationLocationSubscription?.cancel();
@@ -870,22 +870,164 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
   List<Widget> _buildNavigationUI() {
     return [
-      _buildFuturisticTopCard(),
-      _buildFuturisticBottomPanel(),
-      _buildSpeedLimitIndicator(),
-
-      Positioned(
-        bottom: 150,
-        right: 15,
-        child: FloatingActionButton(
-          mini: true,
-          backgroundColor: _isCameraLocked ? Colors.blue : Colors.white,
-          foregroundColor: _isCameraLocked ? Colors.white : Colors.grey,
-          onPressed: _toggleCameraLock,
-          child: Icon(_isCameraLocked ? Icons.navigation : Icons.my_location),
+      // Top Card - Animate Opacity to hide when arrived
+      AnimatedOpacity(
+        opacity: _isArrived ? 0.0 : 1.0,
+        duration: const Duration(milliseconds: 500),
+        child: IgnorePointer(
+          ignoring: _isArrived, // Disable touches when hidden
+          child: _buildFuturisticTopCard(),
         ),
-      )
+      ),
+
+      // Bottom Panel - Hide standard bottom panel when arrived
+      if (!_isArrived) _buildFuturisticBottomPanel(),
+
+      if (!_isArrived) _buildSpeedLimitIndicator(),
+
+      // Camera Lock Button - Hide when arrived
+      if (!_isArrived)
+        Positioned(
+          bottom: 150,
+          right: 15,
+          child: FloatingActionButton(
+            mini: true,
+            backgroundColor: _isCameraLocked ? Colors.blue : Colors.white,
+            foregroundColor: _isCameraLocked ? Colors.white : Colors.grey,
+            onPressed: _toggleCameraLock,
+            child: Icon(_isCameraLocked ? Icons.navigation : Icons.my_location),
+          ),
+        ),
+
+      // --- NEW: Arrival Summary Panel ---
+      if (_isArrived) _buildArrivalSummaryPanel(),
     ];
+  }
+
+  Widget _buildArrivalSummaryPanel() {
+    final now = DateTime.now();
+    final duration = _navigationStopwatch.elapsed;
+    String timeTaken = "${duration.inMinutes} min ${duration.inSeconds % 60} sec";
+
+    // Calculate Average Speed
+    String avgSpeedText = "N/A";
+    if (_speedSamples.isNotEmpty) {
+      double sumSpeed = _speedSamples.reduce((a, b) => a + b);
+      double avgMps = sumSpeed / _speedSamples.length;
+      double avgKmph = avgMps * 3.6; // Convert m/s to km/h
+      avgSpeedText = "${avgKmph.toStringAsFixed(1)} km/h";
+    }
+
+    return Positioned(
+      bottom: 0,
+      left: 0,
+      right: 0,
+      child: Container(
+        padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(context).padding.bottom + 20),
+        decoration: BoxDecoration(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 20,
+              spreadRadius: 5,
+            )
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text("Trip Completed", style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold, color: Colors.green)),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                      color: Colors.amber.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.amber)
+                  ),
+                  child: Text("Auto-closing in ${_arrivalCountdown}s", style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
+                )
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Time Stats
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("ACTUAL TIME", style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                    Text(timeTaken, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text("ESTIMATED", style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                    Text(_originalEtaText, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Clock Times
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text("Started: ${DateFormat.jm().format(_actualTripStartTime ?? now)}", style: const TextStyle(fontWeight: FontWeight.w500)),
+                Text("Arrived: ${DateFormat.jm().format(now)}", style: const TextStyle(fontWeight: FontWeight.w500)),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Speed Stat
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).dividerColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.speed, color: Colors.blue),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text("Average Speed", style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                      Text(avgSpeedText, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    ],
+                  )
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Complete Button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _finalizeTrip,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+                child: const Text("COMPLETE TRIP", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+              ),
+            )
+          ],
+        ),
+      ),
+    );
   }
 
   Set<Marker> _buildMarkers() {
@@ -1758,8 +1900,14 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     WakelockPlus.enable();
 
     _tripStartTime = DateTime.now();
+    _actualTripStartTime = DateTime.now(); // Ensure this is set
     _tripPathRecorded = [];
+    _speedSamples.clear();
+    _totalDistanceTraveledMeters = 0.0;
+    _originalEtaText = _routes[_selectedRouteIndex].duration; // Capture original estimate
     _offRouteStrikeCount = 0;
+    _isArrived = false; // Reset arrival state
+    _arrivalCountdown = 10; // Reset timer
 
     setState(() {
       _isNavigating = true;
@@ -1790,40 +1938,29 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   }
 
   void _stopNavigation() async {
-    // 1. Capture End Time
-    final endTime = DateTime.now();
-    final durationSecs = _navigationStopwatch.elapsed.inSeconds;
+    // Cancel the new timer
+    _arrivalTimer?.cancel();
+    _arrivalCountdown = 10;
 
     WakelockPlus.disable();
     _navigationLocationSubscription?.cancel();
     _speedLimitTimer?.cancel();
-    _offRouteCheckTimer?.cancel(); // Stop checking
+    _offRouteCheckTimer?.cancel();
     NotificationService().cancelNavigationNotification();
     _navigationStopwatch.stop();
     _navigationStopwatch.reset();
 
-    // 2. Save Trip to Database (if it was a valid trip)
-    if (_origin != null && _destination != null && _tripPathRecorded.length > 5) {
-      final trip = TripHistory(
-        startAddress: _origin!.address,
-        endAddress: _destination!.address,
-        startTime: _tripStartTime!,
-        endTime: endTime,
-        durationSeconds: durationSecs,
-        distanceText: _routes[_selectedRouteIndex].distance, // Approx distance
-        routePath: List.from(_tripPathRecorded),
-      );
+    // Note: The saving logic was moved to _finalizeTrip, so we just clean up UI here
 
-      await DatabaseService().insertTrip(trip);
-      print("Trip Saved to History");
+    if (mounted) {
+      setState(() {
+        _isNavigating = false;
+        _navigationStarted = false;
+        _currentSpeedLimit = null;
+        _isArrived = false; // Reset
+      });
+      _updateMarkersAndPolylines();
     }
-
-    setState(() {
-      _isNavigating = false;
-      _navigationStarted = false;
-      _currentSpeedLimit = null;
-    });
-    _updateMarkersAndPolylines();
   }
 
   void _recenterCamera() {
@@ -1879,40 +2016,55 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           if (!mounted || !_isNavigating) return;
 
           final newLatLng = LatLng(currentLocation.latitude!, currentLocation.longitude!);
+
+          if (_lastLocation != null) {
+            double dist = _calculateDistance(_lastLocation!.latitude, _lastLocation!.longitude, newLatLng.latitude, newLatLng.longitude);
+            if (dist < 100) {
+              _totalDistanceTraveledMeters += dist;
+              _tripPathRecorded.add(newLatLng);
+            }
+          }
+          if (currentLocation.speed != null && currentLocation.speed! > 0) {
+            _speedSamples.add(currentLocation.speed!);
+          }
           _lastLocation = newLatLng;
           final newRotation = currentLocation.heading ?? 0.0;
           _currentUserRotation = newRotation;
 
-          if (!_isRecalculating) {
+          if (_destination != null) {
+            double distToDest = _calculateDistance(
+                newLatLng.latitude, newLatLng.longitude,
+                _destination!.coordinates.latitude, _destination!.coordinates.longitude
+            );
 
-            // --- NEW: DYNAMIC CAMERA LOGIC ---
+            // Trigger Arrival if < 16 meters
+            if (distToDest < 16.0 && !_isArrived) {
+              _onArrivalDetected();
+            }
+            // Go back to navigation if user moves away (> 25 meters hysteresis)
+            else if (distToDest > 25.0 && _isArrived) {
+              _resumeNavigationFromArrival();
+            }
+          }
+
+          if (!_isRecalculating) {
             double targetZoom = 17.5;
             double targetTilt = 50.0;
             double lookAheadDistance = 0.0005; // Roughly 50m ahead (in degrees) to keep car at bottom
 
-            // Calculate distance to next turn to adjust camera
             if (_navSteps.isNotEmpty && _currentStepIndex < _navSteps.length) {
               final currentStep = _navSteps[_currentStepIndex];
-              // We can reuse the helper here to check distance
               double distToTurn = _calculateDistanceAlongPolyline(newLatLng, currentStep['polyline']['points']);
 
               if (distToTurn < 100) {
-                // APPROACHING TURN: Zoom in to show the intersection clearly
-                // As we get closer (100m -> 0m), zoom goes from 18 -> 20
                 double ratio = (100 - distToTurn) / 100; // 0.0 to 1.0
                 targetZoom = 18.0 + (2.0 * ratio); // Max zoom 20.0
 
-                // Reduce tilt slightly at the turn so we look "down" at the road
                 targetTilt = 50.0 - (20.0 * ratio); // Tilts down to 30.0 at the turn
 
-                // Reduce lookahead so the car centers up slightly for the maneuver
                 lookAheadDistance = 0.0005 * (1 - ratio);
               }
             }
-
-            // Calculate "Look Ahead" Target
-            // This math moves the camera center forward based on your bearing
-            // effectively pushing your car icon to the bottom of the screen.
             double headingRad = newRotation * (pi / 180.0);
             double targetLat = newLatLng.latitude + (lookAheadDistance * cos(headingRad));
             double targetLng = newLatLng.longitude + (lookAheadDistance * sin(headingRad));
@@ -1925,9 +2077,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                 bearing: newRotation,
               ),
             ));
-            // --- END DYNAMIC CAMERA ---
-
-            // 2. Update 3D Car Position (Sync with screen pixels)
             if (_show3DCar && _isMapControllerInitialized) {
               try {
                 ScreenCoordinate screenPos = await mapController.getScreenCoordinate(newLatLng);
@@ -1976,6 +2125,83 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       _offRouteStrikeCount = 0;
       print("REROUTING NOW...");
       _recalculateRoute(userPosition);
+    }
+  }
+
+  void _onArrivalDetected() {
+    setState(() {
+      _isArrived = true;
+      _arrivalCountdown = 10;
+    });
+
+    // Speak completion message
+    _speak("You have arrived at your destination.");
+
+    // Start Auto-Complete Timer
+    _arrivalTimer?.cancel();
+    _arrivalTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        _arrivalCountdown--;
+      });
+
+      if (_arrivalCountdown <= 0) {
+        timer.cancel();
+        _finalizeTrip(); // Auto-complete
+      }
+    });
+  }
+
+  void _resumeNavigationFromArrival() {
+    // User moved away from destination without finishing
+    _arrivalTimer?.cancel();
+    setState(() {
+      _isArrived = false;
+      _arrivalCountdown = 10;
+    });
+    _speak("Resuming navigation.");
+  }
+
+  Future<void> _finalizeTrip() async {
+    _arrivalTimer?.cancel();
+    final endTime = DateTime.now();
+    final durationSecs = _navigationStopwatch.elapsed.inSeconds;
+
+    // Save to DB
+    if (_origin != null && _destination != null) {
+      // Calculate formatted distance driven
+      String actualDistText;
+      if (_totalDistanceTraveledMeters < 1000) {
+        actualDistText = "${_totalDistanceTraveledMeters.toStringAsFixed(0)} m";
+      } else {
+        actualDistText = "${(_totalDistanceTraveledMeters / 1000).toStringAsFixed(1)} km";
+      }
+
+      final trip = TripHistory(
+        startAddress: _origin!.address,
+        endAddress: _destination!.address,
+        startTime: _actualTripStartTime ?? DateTime.now(),
+        endTime: endTime,
+        durationSeconds: durationSecs,
+        distanceText: actualDistText, // Use actual driven distance
+        routePath: List.from(_tripPathRecorded),
+      );
+
+      await DatabaseService().insertTrip(trip);
+      debugPrint("Trip Auto-Completed and Saved");
+    }
+
+    _stopNavigation();
+
+    // Optional: Show a quick snackbar or dialog confirming save before popping
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Trip saved to history!")),
+      );
+      Navigator.of(context).pop(); // Exit Directions Screen
     }
   }
 
