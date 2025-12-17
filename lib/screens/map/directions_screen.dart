@@ -15,7 +15,6 @@ import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/foundation.dart';
 
 import '../../main.dart';
 import '../../api/google_maps_api_service.dart';
@@ -369,22 +368,26 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   }
 
   Future<void> _getDirections() async {
-    if (_origin == null || _destination == null) return;
+    if (_origin == null || _destination == null) {
+      return;
+    }
 
     if (_origin!.placeId == 'user_location') {
       try {
         final location = Location();
-        if (await location.hasPermission() == PermissionStatus.granted) {
+        final hasPermission = await location.hasPermission();
+        if (hasPermission == PermissionStatus.granted) {
           final locData = await location.getLocation();
           if (locData.latitude != null && locData.longitude != null) {
             final currentLatLng = LatLng(locData.latitude!, locData.longitude!);
+            // Quietly update the origin coordinate
             _origin = PlaceDetails(
                 placeId: 'user_location',
                 name: "Current Location",
-                address: "Your Location",
+                address: "Your Location", // Or reverse geocode again if you want
                 coordinates: currentLatLng
             );
-            _lastLocation = currentLatLng;
+            _lastLocation = currentLatLng; // Sync tracking
           }
         }
       } catch (e) {
@@ -413,15 +416,12 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
       if (data['status'] == 'OK') {
         final List<RouteInfo> fetchedRoutes = [];
-
-        for (var routeData in data['routes']) {
-          final leg = routeData['legs'][0];
-
-          // --- FIX: Explicitly cast to String ---
-          final String encodedPoly = routeData['overview_polyline']['points'] as String;
-          final List<LatLng> polylinePoints = await compute(decodePolylineInIsolate, encodedPoly);
-          // --------------------------------------
-
+        for (var route in data['routes']) {
+          final leg = route['legs'][0];
+          List<LatLng> polylinePoints = PolylinePoints()
+              .decodePolyline(route['overview_polyline']['points'])
+              .map((p) => LatLng(p.latitude, p.longitude))
+              .toList();
           final durationText = leg['duration_in_traffic']?['text'] ?? leg['duration']['text'];
           final durationValue = leg['duration_in_traffic']?['value'] ?? leg['duration']['value'];
 
@@ -447,14 +447,15 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
               String? line;
               String? vehicle;
 
-              if (mode == 'TRANSIT' && step['transit_details'] != null) {
+              if (mode == 'TRANSIT') {
                 stepMode = StepTravelMode.transit;
-                line = step['transit_details']['line']['short_name'] ?? step['transit_details']['line']['name'];
-                vehicle = step['transit_details']['line']['vehicle']['type'];
+                if (step['transit_details'] != null) {
+                  line = step['transit_details']['line']['short_name'] ??
+                      step['transit_details']['line']['name'];
+                  vehicle = step['transit_details']['line']['vehicle']['type'];
+                }
               }
 
-              // Note: We perform a simple decode here on main thread for steps as they are usually short
-              // If this lags, we can make another isolate function for this too.
               steps.add(RouteStep(
                 instruction: _stripHtmlIfNeeded(step['html_instructions']),
                 distance: step['distance']['text'],
@@ -468,6 +469,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                     .toList(),
               ));
             }
+
             parsedTransitRoutes.add(FullTransitRoute(
                 duration: leg['duration']['text'],
                 distance: leg['distance']['text'],
@@ -481,7 +483,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           setState(() {
             _routes = fetchedRoutes;
             _processRoutes();
-            if (_travelMode != TravelMode.transit) _transitRoutes = [];
+            if (_travelMode != TravelMode.transit) {
+              _transitRoutes = [];
+            }
             _detailedRoute = null;
 
             if (_routes.isNotEmpty) {
@@ -493,12 +497,22 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           });
         }
       } else {
-        if(mounted) setState(() { _routes = []; _transitRoutes = []; });
+        if(mounted) {
+          setState(() {
+            _routes = [];
+            _transitRoutes = [];
+          });
+        }
       }
       _updateMarkersAndPolylines();
     } catch (e) {
       debugPrint("Error fetching directions: $e");
-      if(mounted) setState(() { _routes = []; _transitRoutes = []; });
+      if(mounted) {
+        setState(() {
+          _routes = [];
+          _transitRoutes = [];
+        });
+      }
     } finally {
       LoadingOverlay.hide();
       if (mounted) {
@@ -507,6 +521,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       }
     }
   }
+
   void _processRoutes() {
     if (_routes.isEmpty) return;
     _fastestRouteIndex = 0;
@@ -855,37 +870,26 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
   List<Widget> _buildNavigationUI() {
     return [
-      // 1. Top Card (Must be Positioned)
-      Positioned(
-        top: 0,
-        left: 0,
-        right: 0,
-        child: AnimatedOpacity(
-          opacity: _isArrived ? 0.0 : 1.0,
-          duration: const Duration(milliseconds: 500),
-          child: IgnorePointer(
-            ignoring: _isArrived,
-            child: _buildFuturisticTopCard(),
-          ),
+      // Top Card - Animate Opacity to hide when arrived
+      AnimatedOpacity(
+        opacity: _isArrived ? 0.0 : 1.0,
+        duration: const Duration(milliseconds: 500),
+        child: IgnorePointer(
+          ignoring: _isArrived, // Disable touches when hidden
+          child: _buildFuturisticTopCard(),
         ),
       ),
 
-      // 2. Bottom Panel (Already Positioned in _buildFuturisticBottomPanel? Check below)
+      // Bottom Panel - Hide standard bottom panel when arrived
       if (!_isArrived) _buildFuturisticBottomPanel(),
 
-      // 3. Speed Limit (Must be Positioned)
-      if (!_isArrived)
-        Positioned(
-          top: 150, // Adjust position as needed
-          right: 20,
-          child: _buildSpeedLimitIndicator(),
-        ),
+      if (!_isArrived) _buildSpeedLimitIndicator(),
 
-      // 4. Camera Lock Button (Must be Positioned)
+      // Camera Lock Button - Hide when arrived
       if (!_isArrived)
         Positioned(
-          bottom: 220, // Move up to avoid overlapping bottom panel
-          right: 20,
+          bottom: 150,
+          right: 15,
           child: FloatingActionButton(
             mini: true,
             backgroundColor: _isCameraLocked ? Colors.blue : Colors.white,
@@ -895,7 +899,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           ),
         ),
 
-      // 5. Arrival Panel (This method likely returns a Positioned widget, which is fine)
+      // --- NEW: Arrival Summary Panel ---
       if (_isArrived) _buildArrivalSummaryPanel(),
     ];
   }
@@ -1351,46 +1355,99 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     });
   }
   Widget _buildFuturisticBottomPanel() {
-    // --- FIX: Wrap Container in Positioned to work inside the Stack ---
+    // FIX: Calculate Arrival Time based on Remaining Time (not total trip time)
+    final totalDurationSeconds = _routes[_selectedRouteIndex].durationValue;
+    final elapsedSeconds = _navigationStopwatch.elapsed.inSeconds;
+    final remainingSeconds = max(0, totalDurationSeconds - elapsedSeconds);
+
+    // Add REMAINING time to current time
+    final arrivalTime = DateTime.now().add(Duration(seconds: remainingSeconds));
+    final timeFormat = DateFormat.jm();
+
     return Positioned(
-      bottom: 0,
-      left: 0,
-      right: 0,
-      child: Container(
-        padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(context).padding.bottom + 20),
-        decoration: BoxDecoration(
-          color: Theme.of(context).scaffoldBackgroundColor,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 10,
-              offset: const Offset(0, -5),
-            )
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(_navEta, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.green)),
-                    Text("$_navDistance • $_originalEtaText", style: TextStyle(color: Colors.grey.shade600)),
-                  ],
-                ),
-                FloatingActionButton(
-                  backgroundColor: Colors.redAccent,
-                  child: const Icon(Icons.close, color: Colors.white),
-                  onPressed: _stopNavigation,
-                ),
-              ],
+      bottom: MediaQuery.of(context).padding.bottom + 20,
+      left: 15,
+      right: 15,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: GlassmorphicContainer(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        timeFormat.format(arrivalTime),
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold),
+                      ),
+                      Row(
+                        children: [
+                          Text(
+                            _navEta,
+                            style: const TextStyle(
+                                color: Colors.greenAccent,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            " · $_navDistance",
+                            style: TextStyle(
+                                color: Colors.white.withOpacity(0.7),
+                                fontSize: 16),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  IconButton(
+                    icon: Icon(_isMuted ? Icons.volume_off : Icons.volume_up,
+                        color: Colors.white),
+                    onPressed: () {
+                      setState(() => _isMuted = !_isMuted);
+                      _saveMutePreference(_isMuted);
+                    },
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 12),
+          GestureDetector(
+            onTap: _stopNavigation,
+            child: Container(
+              height: 64,
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              decoration: BoxDecoration(
+                  color: Colors.red.shade600,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.red.withOpacity(0.4),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    )
+                  ]),
+              child: const Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.close, color: Colors.white, size: 28),
+                  Text("EXIT",
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold))
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2755,10 +2812,4 @@ class LatLngTween extends Tween<LatLng> {
       begin!.longitude + (end!.longitude - begin!.longitude) * t,
     );
   }
-}
-
-List<LatLng> decodePolylineInIsolate(String encodedString) {
-  PolylinePoints polylinePoints = PolylinePoints();
-  List<PointLatLng> result = polylinePoints.decodePolyline(encodedString);
-  return result.map((p) => LatLng(p.latitude, p.longitude)).toList();
 }
