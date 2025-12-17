@@ -41,7 +41,7 @@ class DatabaseService {
         placeId TEXT UNIQUE NOT NULL,
         latitude REAL NOT NULL,
         longitude REAL NOT NULL,
-        country TEXT DEFAULT 'Unknown'
+        country TEXT DEFAULT 'Unknown',
         city TEXT DEFAULT 'Unknown',
         state TEXT DEFAULT 'Unknown'
       )

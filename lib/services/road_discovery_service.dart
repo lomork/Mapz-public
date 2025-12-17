@@ -37,6 +37,8 @@ class RoadDiscoveryService {
   static const double _speedThreshold = 1.0;
   final DatabaseService _dbService = DatabaseService();
 
+  LocationData? _lastLocationData;
+
   RoadDiscoveryService(this._apiService, this._fakeLocationProvider);
 
   Map<String, int> get _totalRoadsData => {
@@ -71,7 +73,27 @@ class RoadDiscoveryService {
     if (locationData.latitude == null || locationData.longitude == null) return;
 
     final newPoint = LatLng(locationData.latitude!, locationData.longitude!);
-    final speed = locationData.speed ?? 0.0;
+    double speed = locationData.speed ?? 0.0;
+
+    if (speed == 0.0 && _lastLocationData != null && _lastLocationData!.latitude != null) {
+
+      const double earthRadius = 6371000; // meters
+      final dLat = (locationData.latitude! - _lastLocationData!.latitude!) * (pi / 180);
+      final dLon = (locationData.longitude! - _lastLocationData!.longitude!) * (pi / 180);
+      final a = sin(dLat / 2) * sin(dLat / 2) +
+          cos(_lastLocationData!.latitude! * (pi / 180)) *
+              cos(locationData.latitude! * (pi / 180)) *
+              sin(dLon / 2) * sin(dLon / 2);
+      final c = 2 * atan2(sqrt(a), sqrt(1 - a));
+      final distance = earthRadius * c;
+
+      final timeDiff = (locationData.time ?? 0) - (_lastLocationData!.time ?? 0);
+      if (timeDiff > 0) {
+        // timeDiff is usually in ms
+        speed = distance / (timeDiff / 1000);
+      }
+    }
+    _lastLocationData = locationData;
 
     if (speed > _speedThreshold) { // User is moving
       _stopTimer?.cancel();
