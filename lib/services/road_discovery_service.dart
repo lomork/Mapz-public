@@ -38,6 +38,9 @@ class RoadDiscoveryService {
   final DatabaseService _dbService = DatabaseService();
 
   LocationData? _lastLocationData;
+  String? _lastKnownCountry;
+  String? _lastKnownState;
+  String? _lastKnownCity;
 
   RoadDiscoveryService(this._apiService, this._fakeLocationProvider);
 

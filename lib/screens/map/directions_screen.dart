@@ -377,17 +377,22 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         final location = Location();
         final hasPermission = await location.hasPermission();
         if (hasPermission == PermissionStatus.granted) {
-          final locData = await location.getLocation();
-          if (locData.latitude != null && locData.longitude != null) {
+          final locData = await location.getLocation().timeout(
+            const Duration(seconds: 2),
+            onTimeout: () {
+              // If it takes too long, just return null and use the existing origin
+              throw TimeoutException("Location took too long");
+            },
+          );          if (locData.latitude != null && locData.longitude != null) {
             final currentLatLng = LatLng(locData.latitude!, locData.longitude!);
             // Quietly update the origin coordinate
             _origin = PlaceDetails(
                 placeId: 'user_location',
                 name: "Current Location",
-                address: "Your Location", // Or reverse geocode again if you want
+                address: "Your Location",
                 coordinates: currentLatLng
             );
-            _lastLocation = currentLatLng; // Sync tracking
+            _lastLocation = currentLatLng;
           }
         }
       } catch (e) {
@@ -568,7 +573,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         polylineId: PolylineId('route_traffic_segment_$i'),
         points: points,
         color: color, // Use the traffic color determined above
-        width: 19, // Width of polyline.
+        width: 6, // Width of polyline.
         startCap: Cap.roundCap,
         endCap: Cap.roundCap,
         jointType: JointType.round,
@@ -747,7 +752,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
             polylineId: PolylineId('route_alt_$i'),
             points: _routes[i].polylinePoints,
             color: alternativeRouteColor,
-            width: 9,
+            width: 6,
             zIndex: 0,
             consumeTapEvents: true,
             onTap: () => _onRouteTapped(i),
@@ -1082,7 +1087,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                       });
                     }
                   },
-                  // ----------------------------------------------------
                   onCameraIdle: () {
                     _updateNavigationMarkerIcon();
                   },
@@ -1221,7 +1225,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     }
 
     return Positioned(
-      top: MediaQuery.of(context).padding.top + 10,
+      top: MediaQuery.of(context).padding.top + 60,
       left: 15,
       right: 15,
       child: GestureDetector(
@@ -1365,11 +1369,11 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     final timeFormat = DateFormat.jm();
 
     return Positioned(
-      bottom: MediaQuery.of(context).padding.bottom + 20,
+      bottom: MediaQuery.of(context).padding.bottom + 40,
       left: 15,
       right: 15,
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Expanded(
             child: GlassmorphicContainer(
@@ -1710,34 +1714,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_travelMode == TravelMode.driving)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12.0),
-              child: Center(
-                child: SegmentedButton<RouteType>(
-                  segments: const <ButtonSegment<RouteType>>[
-                    ButtonSegment<RouteType>(
-                        value: RouteType.fastest,
-                        label: Text('Fastest'),
-                        icon: Icon(Icons.timer)),
-                    ButtonSegment<RouteType>(
-                        value: RouteType.scenic,
-                        label: Text('Scenic'),
-                        icon: Icon(Icons.park)),
-                  ],
-                  selected: <RouteType>{_routeType},
-                  onSelectionChanged: (Set<RouteType> newSelection) {
-                    setState(() {
-                      _routeType = newSelection.first;
-                      _selectedRouteIndex = _routeType == RouteType.fastest
-                          ? _fastestRouteIndex
-                          : _scenicRouteIndex;
-                      _updateMarkersAndPolylines();
-                    });
-                  },
-                ),
-              ),
-            ),
           Text("ETA: ${route.duration} (${route.distance})",
               style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 12),
@@ -2430,12 +2406,15 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       });
     }
 
-    NotificationService().showNavigationNotification(
-        destination: _destination?.name ?? 'your destination',
-        eta: _navEta,
-        timeRemaining: newEtaString,
-        nextTurn: _navInstruction,
-        maneuverIcon: _navManeuverIcon);
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      NotificationService().showNavigationNotification(
+          destination: _destination?.name ?? 'your destination',
+          eta: _navEta,
+          timeRemaining: newEtaString,
+          nextTurn: _navInstruction,
+          maneuverIcon: _navManeuverIcon
+      );
+    }
   }
 
   int _findClosestPointIndex(LatLng userPos, List<LatLng> path) {
