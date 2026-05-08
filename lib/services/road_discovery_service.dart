@@ -31,6 +31,8 @@ class RoadDiscoveryService {
   StreamSubscription<DocumentSnapshot>? _userSettingsStream;
   bool _isSharingEnabled = false;
 
+  DateTime? _lastLiveLocationUpdate;
+
   bool _isHighAccuracy = false;
   Timer? _stopTimer;
   bool _isNotificationActive = false;
@@ -152,6 +154,13 @@ class RoadDiscoveryService {
   Future<void> _updateLiveLocationIfSharing(LatLng point) async {
     // If setting is off, do nothing.
     if (!_isSharingEnabled) return;
+
+    final now = DateTime.now();
+    if (_lastLiveLocationUpdate != null &&
+        now.difference(_lastLiveLocationUpdate!).inSeconds < 15) {
+      return; // Skip the write if 15 seconds haven't passed
+    }
+    _lastLiveLocationUpdate = now;
 
     try {
       final userId = FirebaseAuth.instance.currentUser?.uid;
@@ -412,9 +421,6 @@ class RoadDiscoveryService {
     }
     return 0.0; // Default to 0 if not found or on error
   }
-
-  // Updates your cloud database (e.g., Firebase) with the new percentage
-// lib/services/road_discovery_service.dart
 
   // Updates your cloud database (e.g., Firebase) with the new percentage
   Future<void> updateCloudPercentage(double localPercentage, String country) async {

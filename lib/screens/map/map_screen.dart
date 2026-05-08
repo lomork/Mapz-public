@@ -32,6 +32,9 @@ import 'directions_screen.dart';
 import '../discovery/road_discovery_screen.dart';
 import '../../providers/settings_provider.dart';
 import 'package:mapz/providers/fake_location_provider.dart';
+import '../../widgets/top_search_bar.dart';
+import '../../widgets/nearby_search_results_panel.dart';
+import '../../widgets/place_details_panel.dart';
 
 class MapScreen extends StatefulWidget {
   final User user;
@@ -41,7 +44,8 @@ class MapScreen extends StatefulWidget {
   State<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, AutomaticKeepAliveClientMixin{
+class _MapScreenState extends State<MapScreen>
+    with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   late GoogleMapController mapController;
   bool _isMapControllerInitialized = false;
   final LatLng _center = const LatLng(56.1304, -106.3468);
@@ -95,21 +99,25 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
   List<TtsVoiceInfo> _availableFriendlyVoices = [];
   final List<TtsVoiceInfo> _friendlyVoices = [
     TtsVoiceInfo(id: 'en-us-x-sfg#male_1-local', displayName: 'American Male'),
-    TtsVoiceInfo(id: 'en-us-x-sfg#female_1-local', displayName: 'American Female'),
+    TtsVoiceInfo(
+        id: 'en-us-x-sfg#female_1-local', displayName: 'American Female'),
     TtsVoiceInfo(id: 'en-gb-x-rjs#male_1-local', displayName: 'British Male'),
-    TtsVoiceInfo(id: 'en-gb-x-rjs#female_1-local', displayName: 'British Female'),
-    TtsVoiceInfo(id: 'en-au-x-afh#male_1-local', displayName: 'Australian Male'),
-    TtsVoiceInfo(id: 'fr-fr-x-vlf#female_1-local', displayName: 'French Female'),
-    TtsVoiceInfo(id: 'es-es-x-eee#female_1-local', displayName: 'Spanish Female'),
+    TtsVoiceInfo(
+        id: 'en-gb-x-rjs#female_1-local', displayName: 'British Female'),
+    TtsVoiceInfo(
+        id: 'en-au-x-afh#male_1-local', displayName: 'Australian Male'),
+    TtsVoiceInfo(
+        id: 'fr-fr-x-vlf#female_1-local', displayName: 'French Female'),
+    TtsVoiceInfo(
+        id: 'es-es-x-eee#female_1-local', displayName: 'Spanish Female'),
     TtsVoiceInfo(id: 'de-de-x-deb#male_1-local', displayName: 'German Male'),
   ];
-
 
   @override
   void initState() {
     super.initState();
     _markerAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 1000),
+      duration: const Duration(milliseconds: 750),
       vsync: this,
     );
     _markerAnimationController!.addListener(() {
@@ -118,7 +126,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     _initializeMapAndLocation();
     _initTts();
     _searchFocusNode.addListener(_onSearchFocusChange);
-
   }
 
   @override
@@ -138,16 +145,18 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
       var voices = await _flutterTts.getVoices;
       if (voices is List) {
         final availableVoiceIds =
-        voices.map((v) => (v as Map)['name'].toString()).toSet();
+            voices.map((v) => (v as Map)['name'].toString()).toSet();
 
         _availableFriendlyVoices = _friendlyVoices
-            .where((friendlyVoice) => availableVoiceIds.contains(friendlyVoice.id))
+            .where(
+                (friendlyVoice) => availableVoiceIds.contains(friendlyVoice.id))
             .toList();
 
         final prefs = await SharedPreferences.getInstance();
         _selectedTtsVoice = prefs.getString('selectedTtsVoice');
 
-        if (_selectedTtsVoice == null || !availableVoiceIds.contains(_selectedTtsVoice)) {
+        if (_selectedTtsVoice == null ||
+            !availableVoiceIds.contains(_selectedTtsVoice)) {
           if (_availableFriendlyVoices.isNotEmpty) {
             _selectedTtsVoice = _availableFriendlyVoices.first.id;
             await prefs.setString('selectedTtsVoice', _selectedTtsVoice!);
@@ -163,16 +172,22 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     }
   }
 
-  Future<BitmapDescriptor> _getResizedMarkerIcon(String assetPath, int width) async {
+  Future<BitmapDescriptor> _getResizedMarkerIcon(
+      String assetPath, int width) async {
     ByteData data = await rootBundle.load(assetPath);
-    ui.Codec codec = await ui.instantiateImageCodec(data.buffer.asUint8List(), targetWidth: width);
+    ui.Codec codec = await ui.instantiateImageCodec(data.buffer.asUint8List(),
+        targetWidth: width);
     ui.FrameInfo fi = await codec.getNextFrame();
-    final Uint8List resizedBytes = (await fi.image.toByteData(format: ui.ImageByteFormat.png))!.buffer.asUint8List();
+    final Uint8List resizedBytes =
+        (await fi.image.toByteData(format: ui.ImageByteFormat.png))!
+            .buffer
+            .asUint8List();
     return BitmapDescriptor.fromBytes(resizedBytes);
   }
 
   Future<void> _initializeMapAndLocation() async {
-    _userMarkerIcon = await _getResizedMarkerIcon('assets/images/UserLocation.png', 150);
+    _userMarkerIcon =
+        await _getResizedMarkerIcon('assets/images/UserLocation.png', 150);
     await _loadMapSettings();
     await _loadMapStyles();
     await _initLocationServices();
@@ -203,7 +218,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
 
   Future<void> _listenToLocationChanges() async {
     final locationService = Location();
-    final fakeLocationProvider = context.read<FakeLocationProvider>(); // <-- ADD THIS
+    final fakeLocationProvider =
+        context.read<FakeLocationProvider>(); // <-- ADD THIS
 
     await locationService.changeSettings(
       accuracy: LocationAccuracy.high,
@@ -215,21 +231,21 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     _fakeLocationSubscription?.cancel();
 
     // 1. Listen to REAL GPS
-    _locationSubscription =
-        locationService.onLocationChanged.listen((LocationData currentLocation) {
-          if (!fakeLocationProvider.isFaking) {
-            _updateUserLocation(currentLocation);
-          }
-        });
+    _locationSubscription = locationService.onLocationChanged
+        .listen((LocationData currentLocation) {
+      if (!fakeLocationProvider.isFaking) {
+        _updateUserLocation(currentLocation);
+      }
+    });
 
     // 2. Listen to FAKE GPS
-    _fakeLocationSubscription =
-        fakeLocationProvider.fakeLocationStream.listen((LocationData currentLocation) {
-          // Map screen ALWAYS shows fake location
-          if (fakeLocationProvider.isFaking) {
-            _updateUserLocation(currentLocation);
-          }
-        });
+    _fakeLocationSubscription = fakeLocationProvider.fakeLocationStream
+        .listen((LocationData currentLocation) {
+      // Map screen ALWAYS shows fake location
+      if (fakeLocationProvider.isFaking) {
+        _updateUserLocation(currentLocation);
+      }
+    });
   }
 
   void _updateUserLocation(LocationData currentLocation) {
@@ -237,7 +253,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
         currentLocation.latitude == null ||
         currentLocation.longitude == null) return;
 
-    final newLatLng = LatLng(currentLocation.latitude!, currentLocation.longitude!);
+    final newLatLng =
+        LatLng(currentLocation.latitude!, currentLocation.longitude!);
     final newRotation = currentLocation.heading ?? _previousRotation;
 
     bool isFirstLocationUpdate = _previousLatLng == null;
@@ -253,10 +270,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
       if (_isMapControllerInitialized) {
         mapController.animateCamera(CameraUpdate.newCameraPosition(
           CameraPosition(
-              target: newLatLng,
-              zoom: 15.0,
-              bearing: newRotation,
-              tilt: 0),
+              target: newLatLng, zoom: 15.0, bearing: newRotation, tilt: 0),
         ));
       }
       return;
@@ -265,8 +279,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     _positionAnimation = LatLngTween(begin: _previousLatLng!, end: newLatLng)
         .animate(_markerAnimationController!);
 
-    _rotationAnimation = Tween<double>(begin: _previousRotation, end: newRotation)
-        .animate(_markerAnimationController!);
+    _rotationAnimation =
+        Tween<double>(begin: _previousRotation, end: newRotation)
+            .animate(_markerAnimationController!);
 
     _markerAnimationController!.forward(from: 0.0).whenComplete(() {
       _previousLatLng = newLatLng;
@@ -279,17 +294,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     if (_isFollowingUser) {
       mapController.animateCamera(CameraUpdate.newCameraPosition(
         CameraPosition(
-            target: newLatLng,
-            zoom: 17.5,
-            bearing: newRotation,
-            tilt: 50.0),
+            target: newLatLng, zoom: 17.5, bearing: newRotation, tilt: 50.0),
       ));
     }
   }
 
   Future<void> _loadMapStyles() async {
     _darkMapStyle = await rootBundle.loadString('assets/map_style_dark.json');
-   // _lightMapStyle = await rootBundle.loadString('assets/map_style_light.json');
+    // _lightMapStyle = await rootBundle.loadString('assets/map_style_light.json');
     _updateMapStyle();
   }
 
@@ -321,14 +333,18 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     if (_currentCameraPosition == null) return;
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('last_map_lat', _currentCameraPosition!.target.latitude);
-    await prefs.setDouble('last_map_lng', _currentCameraPosition!.target.longitude);
+    await prefs.setDouble(
+        'last_map_lat', _currentCameraPosition!.target.latitude);
+    await prefs.setDouble(
+        'last_map_lng', _currentCameraPosition!.target.longitude);
     await prefs.setDouble('last_map_zoom', _currentCameraPosition!.zoom);
   }
 
   void _onSearchQueryChanged(String query) {
     setState(() {}); // To update the clear button
-    context.read<MapProvider>().fetchSuggestions(query, userLocation: _currentUserLatLng);
+    context
+        .read<MapProvider>()
+        .fetchSuggestions(query, userLocation: _currentUserLatLng);
   }
 
   void _clearSearch() {
@@ -354,114 +370,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
         .asUint8List();
   }
 
-  Future<void> _fetchPlaceSuggestions(String input) async {
-    if (_sessionToken == null) return;
-    try {
-      final apiService = Provider.of<GoogleMapsApiService>(context, listen: false);
-      final result = await apiService.getPlaceSuggestions(input, _sessionToken!);
-      if (result['status'] == 'OK' && mounted) {
-        setState(() {
-          _suggestions = (result['predictions'] as List)
-              .map((p) => PlaceSuggestion(p['place_id'], p['description']))
-              .toList();
-        });
-      }
-    } catch (e) {
-      debugPrint("Error fetching suggestions: $e");
-    }
-  }
-
-  Future<void> _selectPlace(String placeId, String description) async {
-    _searchFocusNode.unfocus();
-    if (mounted) {
-      setState(() {
-        _isSearching = false;
-        _suggestions = [];
-        _searchController.clear();
-        _selectedPlace = null;
-        _markers.removeWhere((m) => m.markerId.value != 'userLocation');
-      });
-    }
-
-    _addToSearchHistory(SearchHistoryItem(placeId: placeId, description: description));
-
-    try {
-      final apiService = Provider.of<GoogleMapsApiService>(context, listen: false);
-      final result = await apiService.getPlaceDetails(placeId, _sessionToken!);
-
-      if (result['status'] == 'OK') {
-        final placeJson = result['result'];
-        final location = placeJson['geometry']['location'];
-        final latLng = LatLng(location['lat'], location['lng']);
-
-        String? city;
-        String? state;
-        if (placeJson['address_components'] != null) {
-          final components = placeJson['address_components'] as List;
-          for (var component in components) {
-            final types = component['types'] as List;
-            if (types.contains('locality')) city = component['long_name'];
-            if (types.contains('administrative_area_level_1')) state = component['long_name'];
-          }
-        }
-
-        List<String> photoUrls = [];
-        if (placeJson['photos'] != null) {
-          final apiKey = Provider.of<GoogleMapsApiService>(context, listen: false).apiKey;
-          for (var photo in placeJson['photos']) {
-            final photoReference = photo['photo_reference'];
-            final url =
-                'https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=$photoReference&key=$apiKey';
-            photoUrls.add(url);
-          }
-        }
-
-        final openingHours = placeJson['opening_hours'];
-        String? hoursStatus;
-        if (openingHours != null) {
-          hoursStatus = openingHours['open_now'] ?? false ? 'Open now' : 'Closed';
-        }
-
-        final editorialSummaryJson = placeJson['editorial_summary'];
-        String? summary;
-        if (editorialSummaryJson != null) {
-          summary = editorialSummaryJson['overview'];
-        }
-
-        final newPlace = PlaceDetails(
-          placeId: placeJson['place_id'],
-          name: placeJson['name'],
-          address: placeJson['formatted_address'],
-          city: city,
-          state: state,
-          coordinates: latLng,
-          photoUrls: photoUrls,
-          rating: placeJson['rating']?.toDouble(),
-          openingHoursStatus: hoursStatus,
-          phoneNumber: placeJson['international_phone_number'],
-          website: placeJson['website'],
-          editorialSummary: summary,
-        );
-
-        setState(() {
-          _selectedPlace = newPlace;
-          _markers.add(Marker(
-              markerId: MarkerId(placeId),
-              position: latLng,
-              infoWindow: InfoWindow(title: description)));
-        });
-
-        mapController.animateCamera(CameraUpdate.newLatLngZoom(latLng, 15));
-      }
-    } catch (e) {
-      debugPrint("Error selecting place: $e");
-    } finally {
-      if (mounted) {
-        _sessionToken = null;
-      }
-    }
-  }
-
   Future<void> _handleMapTap(LatLng position) async {
     final mapProvider = context.read<MapProvider>();
 
@@ -473,53 +381,52 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     }
 
     try {
-      final apiService = Provider.of<GoogleMapsApiService>(context, listen: false);
+      final apiService =
+          Provider.of<GoogleMapsApiService>(context, listen: false);
       final result = await apiService.reverseGeocode(position);
 
       if (result['status'] == 'OK' && result['results'].isNotEmpty) {
         final topResult = result['results'][0];
         final List<dynamic> types = topResult['types'] ?? [];
         final isPoi = types.any((t) => [
-          'point_of_interest',
-          'establishment',
-          'park',
-          'tourist_attraction',
-          'restaurant',
-          'store',
-          'lodging',
-          'museum',
-          'place_of_worship',
-          'school',
-          'university',
-          'hospital'
-        ].contains(t));
+              'point_of_interest',
+              'establishment',
+              'park',
+              'tourist_attraction',
+              'restaurant',
+              'store',
+              'lodging',
+              'museum',
+              'place_of_worship',
+              'school',
+              'university',
+              'hospital'
+            ].contains(t));
 
         final isGeneric = types.any((t) => [
-          'street_address',
-          'route',
-          'premise',
-          'subpremise',
-          'locality',
-          'political',
-          'administrative_area_level_1',
-          'administrative_area_level_2',
-          'neighborhood'
-        ].contains(t));
+              'street_address',
+              'route',
+              'premise',
+              'subpremise',
+              'locality',
+              'political',
+              'administrative_area_level_1',
+              'administrative_area_level_2',
+              'neighborhood'
+            ].contains(t));
 
         if (isPoi && !isGeneric) {
           final String placeId = topResult['place_id'];
           String description = topResult['formatted_address'];
 
           // Try to get a shorter name if available
-          if (topResult.containsKey('address_components')) {
-          }
+          if (topResult.containsKey('address_components')) {}
 
           await mapProvider.selectPlace(placeId, description);
 
           if (mapProvider.selectedPlace != null) {
-            mapController.animateCamera(
-                CameraUpdate.newLatLngZoom(mapProvider.selectedPlace!.coordinates, 16)
-            );
+            mapController.animateCamera(CameraUpdate.newLatLngZoom(
+                mapProvider.selectedPlace!.coordinates, 16));
           }
         } else {
           debugPrint("Tap ignored. Type was generic: $types");
@@ -529,6 +436,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
       debugPrint("Failed to handle map tap: $e");
     }
   }
+
   Future<void> _loadSearchHistory() async {
     final prefs = await SharedPreferences.getInstance();
     final historyJson = prefs.getStringList('searchHistory') ?? [];
@@ -542,13 +450,15 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
   }
 
   Future<void> _addToSearchHistory(SearchHistoryItem item) async {
-    _searchHistory.removeWhere((historyItem) => historyItem.description == item.description);
+    _searchHistory.removeWhere(
+        (historyItem) => historyItem.description == item.description);
     _searchHistory.insert(0, item);
     if (_searchHistory.length > 10) {
       _searchHistory = _searchHistory.sublist(0, 10);
     }
     final prefs = await SharedPreferences.getInstance();
-    final historyJson = _searchHistory.map((item) => json.encode(item.toJson())).toList();
+    final historyJson =
+        _searchHistory.map((item) => json.encode(item.toJson())).toList();
     await prefs.setStringList('searchHistory', historyJson);
     if (mounted) setState(() {});
   }
@@ -574,7 +484,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     _savedPlaces.removeWhere((p) => p.name.toLowerCase() == name.toLowerCase());
     _savedPlaces.add(newSavedPlace);
     final prefs = await SharedPreferences.getInstance();
-    final savedPlacesJson = _savedPlaces.map((p) => json.encode(p.toJson())).toList();
+    final savedPlacesJson =
+        _savedPlaces.map((p) => json.encode(p.toJson())).toList();
     await prefs.setStringList('savedPlaces', savedPlacesJson);
     if (mounted) {
       Navigator.of(context).pop();
@@ -698,7 +609,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (context) => const AuthGate()),
-            (route) => false,
+        (route) => false,
       );
     }
   }
@@ -719,14 +630,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                     children: [
                       _buildLayerOption(Icons.map, "Normal",
                           _currentMapType == MapType.normal, () {
-                            setState(() => _currentMapType = MapType.normal);
-                            Navigator.of(context).pop();
-                          }),
+                        setState(() => _currentMapType = MapType.normal);
+                        Navigator.of(context).pop();
+                      }),
                       _buildLayerOption(Icons.satellite, "Satellite",
                           _currentMapType == MapType.satellite, () {
-                            setState(() => _currentMapType = MapType.satellite);
-                            Navigator.of(context).pop();
-                          }),
+                        setState(() => _currentMapType = MapType.satellite);
+                        Navigator.of(context).pop();
+                      }),
                     ],
                   ),
                   const Divider(),
@@ -754,29 +665,35 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                       setState(() {});
 
                       // 3. IMPORTANT: Apply Tilt and Zoom if enabling
-                      if (value && _isMapControllerInitialized && _currentCameraPosition != null) {
+                      if (value &&
+                          _isMapControllerInitialized &&
+                          _currentCameraPosition != null) {
                         // Check if we need to zoom in or tilt
-                        double targetZoom = _currentCameraPosition!.zoom < 16.0 ? 17.0 : _currentCameraPosition!.zoom;
-                        double targetTilt = _currentCameraPosition!.tilt < 30.0 ? 45.0 : _currentCameraPosition!.tilt;
+                        double targetZoom = _currentCameraPosition!.zoom < 16.0
+                            ? 17.0
+                            : _currentCameraPosition!.zoom;
+                        double targetTilt = _currentCameraPosition!.tilt < 30.0
+                            ? 45.0
+                            : _currentCameraPosition!.tilt;
 
-                        mapController.animateCamera(CameraUpdate.newCameraPosition(
-                            CameraPosition(
-                              target: _currentCameraPosition!.target,
-                              zoom: targetZoom,
-                              tilt: targetTilt, // <--- THIS MAKES BUILDINGS VISIBLE
-                              bearing: _currentCameraPosition!.bearing,
-                            )
-                        ));
-                      } else if (!value && _isMapControllerInitialized && _currentCameraPosition != null) {
+                        mapController.animateCamera(
+                            CameraUpdate.newCameraPosition(CameraPosition(
+                          target: _currentCameraPosition!.target,
+                          zoom: targetZoom,
+                          tilt: targetTilt, // <--- THIS MAKES BUILDINGS VISIBLE
+                          bearing: _currentCameraPosition!.bearing,
+                        )));
+                      } else if (!value &&
+                          _isMapControllerInitialized &&
+                          _currentCameraPosition != null) {
                         // Optional: Flatten the map back out when disabling
-                        mapController.animateCamera(CameraUpdate.newCameraPosition(
-                            CameraPosition(
-                              target: _currentCameraPosition!.target,
-                              zoom: _currentCameraPosition!.zoom,
-                              tilt: 0.0, // Go back to top-down view
-                              bearing: _currentCameraPosition!.bearing,
-                            )
-                        ));
+                        mapController.animateCamera(
+                            CameraUpdate.newCameraPosition(CameraPosition(
+                          target: _currentCameraPosition!.target,
+                          zoom: _currentCameraPosition!.zoom,
+                          tilt: 0.0, // Go back to top-down view
+                          bearing: _currentCameraPosition!.bearing,
+                        )));
                       }
 
                       // 4. Save Preference
@@ -798,6 +715,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
       },
     );
   }
+
   Widget _buildLayerOption(
       IconData icon, String label, bool isSelected, VoidCallback onTap) {
     return GestureDetector(
@@ -854,7 +772,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
           children: AppTheme.values.map((theme) {
             return ListTile(
               title:
-              Text(theme.name[0].toUpperCase() + theme.name.substring(1)),
+                  Text(theme.name[0].toUpperCase() + theme.name.substring(1)),
               onTap: () {
                 setState(() => _currentTheme = theme);
                 switch (theme) {
@@ -914,10 +832,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                       if (_availableFriendlyVoices.isEmpty)
                         const Center(
                             child: Padding(
-                              padding: EdgeInsets.all(16.0),
-                              child: Text(
-                                  "No alternative voices found on this device."),
-                            ))
+                          padding: EdgeInsets.all(16.0),
+                          child: Text(
+                              "No alternative voices found on this device."),
+                        ))
                       else
                         ..._availableFriendlyVoices.map((voice) {
                           return RadioListTile<String>(
@@ -992,8 +910,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
               _updateMapStyle();
               _restoreLastCameraPosition();
             },
-            initialCameraPosition: CameraPosition(
-                target: _center, zoom: _currentZoom),
+            initialCameraPosition:
+                CameraPosition(target: _center, zoom: _currentZoom),
 
             onCameraMove: (CameraPosition position) {
               _currentZoom = position.zoom;
@@ -1020,7 +938,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
             mapType: _currentMapType,
             trafficEnabled: _isTrafficEnabled,
           ),
-
           if (mapProvider.selectedPlace != null)
             DraggableScrollableSheet(
               initialChildSize: minSheetSize,
@@ -1028,114 +945,51 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
               maxChildSize: maxSheetSize,
               snap: true,
               snapSizes: const [midSheetSize, maxSheetSize],
-              builder: (BuildContext context, ScrollController scrollController) {
-                return _buildPlaceDetailsPanel(scrollController, mapProvider.selectedPlace!);
+              builder:
+                  (BuildContext context, ScrollController scrollController) {
+                return PlaceDetailsPanel(
+                  scrollController: scrollController,
+                  place: mapProvider.selectedPlace!,
+                  currentUserLatLng: _currentUserLatLng,
+                  onSavePlace: _showSavePlaceDialog,
+                );
               },
             ),
-
-          if (mapProvider.nearbySearchResults.isNotEmpty && mapProvider.selectedPlace == null)
-            _buildNearbySearchResultsPanel(mapProvider),
-
+          if (mapProvider.nearbySearchResults.isNotEmpty &&
+              mapProvider.selectedPlace == null)
+            NearbySearchResultsPanel(
+              currentUserLatLng: _currentUserLatLng,
+              onSavePlace: _showSavePlaceDialog,
+            ),
           if (mapProvider.selectedPlace != null)
             _buildPlaceDetailsTopBar(mapProvider)
           else
-            _buildTopSearchBar(mapProvider),
-
-          if (mapProvider.isSearching && mapProvider.nearbySearchResults.isEmpty)
+            Positioned(
+              top: 50.0,
+              left: 15.0,
+              right: 15.0,
+              child: TopSearchBar(
+                user: widget.user,
+                searchController: _searchController,
+                searchFocusNode: _searchFocusNode,
+                onProfileTap: () =>
+                    setState(() => _isProfileMenuVisible = true),
+                currentUserLatLng: _currentUserLatLng,
+                addToSearchHistory: _addToSearchHistory,
+                clearSearch: _clearSearch,
+              ),
+            ),
+          if (mapProvider.isSearching &&
+              mapProvider.nearbySearchResults.isEmpty)
             _buildSearchResultsOverlay(mapProvider),
-
-          if (mapProvider.selectedPlace == null && !mapProvider.isSearching && mapProvider.nearbySearchResults.isEmpty) ...[
+          if (mapProvider.selectedPlace == null &&
+              !mapProvider.isSearching &&
+              mapProvider.nearbySearchResults.isEmpty) ...[
             _buildRightSideButtons(),
           ],
-
           if (_isProfileMenuVisible) _buildProfileMenu(),
         ],
       ),
-    );
-  }
-
-  Widget _buildNearbySearchResultsPanel(MapProvider mapProvider) {
-    final filters = mapProvider.getFiltersForKeyword();
-
-    return DraggableScrollableSheet(
-      initialChildSize: 0.4,
-      minChildSize: 0.15,
-      maxChildSize: 0.7,
-      builder: (BuildContext context, ScrollController scrollController) {
-        return Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).cardColor,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24.0)),
-            boxShadow: [BoxShadow(blurRadius: 10.0, color: Colors.black.withOpacity(0.15))],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Draggable tab
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 5,
-                  margin: const EdgeInsets.symmetric(vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[400],
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-
-              // --- NEW: Title with Close Button ---
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text("Results near you", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => context.read<MapProvider>().clearNearbySearch(),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Filter Chips
-              SizedBox(
-                height: 50,
-                child: ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                  scrollDirection: Axis.horizontal,
-                  itemCount: filters.length,
-                  itemBuilder: (context, index) {
-                    final filter = filters[index];
-                    return FilterChip(
-                      label: Text(filter),
-                      selected: mapProvider.activeFilter == filter,
-                      onSelected: (selected) {
-                        mapProvider.applyFilter(filter);
-                      },
-                    );
-                  },
-                  separatorBuilder: (context, index) => const SizedBox(width: 8),
-                ),
-              ),
-
-              // The scrollable list
-              Expanded(
-                child: ListView.separated(
-                  controller: scrollController,
-                  itemCount: mapProvider.filteredNearbyResults.length,
-                  itemBuilder: (context, index) {
-                    final place = mapProvider.filteredNearbyResults[index];
-                    return _buildSearchResultListItem(place, mapProvider);
-                  },
-                  separatorBuilder: (context, index) => const Divider(height: 1, indent: 16, endIndent: 16),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 
@@ -1151,24 +1005,32 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(place.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            Text(place.name,
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
-            Text(place.address, style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+            Text(place.address,
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
             const SizedBox(height: 6),
             Row(
               children: [
                 if (place.rating != null) ...[
                   const Icon(Icons.star, color: Colors.amber, size: 16),
                   const SizedBox(width: 4),
-                  Text(place.rating.toString(), style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Text(place.rating.toString(),
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(width: 8),
                   Text('•', style: TextStyle(color: Colors.grey.shade600)),
                   const SizedBox(width: 8),
                 ],
                 Text(
-                  place.isOpenNow == null ? 'Hours unknown' : (place.isOpenNow! ? 'Open' : 'Closed'),
+                  place.isOpenNow == null
+                      ? 'Hours unknown'
+                      : (place.isOpenNow! ? 'Open' : 'Closed'),
                   style: TextStyle(
-                    color: place.isOpenNow == true ? Colors.green.shade700 : Colors.red.shade700,
+                    color: place.isOpenNow == true
+                        ? Colors.green.shade700
+                        : Colors.red.shade700,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -1193,7 +1055,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                       ));
                     }
                   },
-                  icon: Icon(Icons.directions, color: Theme.of(context).primaryColor),
+                  icon: Icon(Icons.directions,
+                      color: Theme.of(context).primaryColor),
                   splashRadius: 20,
                 ),
                 IconButton(
@@ -1243,8 +1106,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
           child: Row(
             children: [
               IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => context.read<MapProvider>().closePlaceDetails(),),
+                icon: const Icon(Icons.close),
+                onPressed: () =>
+                    context.read<MapProvider>().closePlaceDetails(),
+              ),
               Expanded(
                 child: Text(
                   mapProvider.selectedPlace?.address ?? 'Location Details',
@@ -1259,7 +1124,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     );
   }
 
-  Widget _buildPlaceDetailsPanel(ScrollController scrollController, PlaceDetails place) {
+  Widget _buildPlaceDetailsPanel(
+      ScrollController scrollController, PlaceDetails place) {
     return Container(
         decoration: BoxDecoration(
           color: Theme.of(context).cardColor,
@@ -1307,7 +1173,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
-                      _buildActionButton("directions_fab", Icons.directions, "Directions", () {
+                      _buildActionButton(
+                          "directions_fab", Icons.directions, "Directions", () {
                         if (_currentUserLatLng != null) {
                           Navigator.of(context).push(MaterialPageRoute(
                             builder: (_) => DirectionsScreen(
@@ -1317,7 +1184,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                           ));
                         }
                       }),
-                      _buildActionButton("save_fab", Icons.bookmark_border, "Save", () {
+                      _buildActionButton(
+                          "save_fab", Icons.bookmark_border, "Save", () {
                         _showSavePlaceDialog(place);
                       }),
                       _buildActionButton("share_fab", Icons.share, "Share", () {
@@ -1332,12 +1200,15 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                   if (place.rating != null) _buildRating(place.rating!),
                   _buildInfoTile(
                       Icons.location_on_outlined, place.address, true),
-                  if (place.openingHoursStatus != null && place.openingHoursStatus!.isNotEmpty)
+                  if (place.openingHoursStatus != null &&
+                      place.openingHoursStatus!.isNotEmpty)
                     _buildInfoTile(
                         Icons.access_time, place.openingHoursStatus!, false),
-                  if (place.phoneNumber != null && place.phoneNumber!.isNotEmpty)
+                  if (place.phoneNumber != null &&
+                      place.phoneNumber!.isNotEmpty)
                     _buildInfoTile(
-                        Icons.phone_outlined, place.phoneNumber!, false, onTap: () async {
+                        Icons.phone_outlined, place.phoneNumber!, false,
+                        onTap: () async {
                       final url = Uri.parse('tel:${place.phoneNumber}');
                       if (await canLaunchUrl(url)) {
                         await launchUrl(url);
@@ -1346,11 +1217,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                   if (place.website != null && place.website!.isNotEmpty)
                     _buildInfoTile(Icons.public, place.website!, false,
                         onTap: () async {
-                          final url = Uri.parse(place.website!);
-                          if (await canLaunchUrl(url)) {
-                            await launchUrl(url, mode: LaunchMode.externalApplication);
-                          }
-                        }),
+                      final url = Uri.parse(place.website!);
+                      if (await canLaunchUrl(url)) {
+                        await launchUrl(url,
+                            mode: LaunchMode.externalApplication);
+                      }
+                    }),
                   _buildAboutSection(place),
                 ],
               ),
@@ -1384,10 +1256,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                       return progress == null
                           ? child
                           : Container(
-                          width: 150,
-                          height: 120,
-                          color: Colors.grey[200],
-                          child: const Center(child: CircularProgressIndicator()));
+                              width: 150,
+                              height: 120,
+                              color: Colors.grey[200],
+                              child: const Center(
+                                  child: CircularProgressIndicator()));
                     },
                     errorBuilder: (context, error, stackTrace) => Container(
                       width: 150,
@@ -1440,13 +1313,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
           title: Text(text),
           trailing: isAddress
               ? IconButton(
-            icon: const Icon(Icons.copy, size: 20),
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: text));
-              ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Address copied!")));
-            },
-          )
+                  icon: const Icon(Icons.copy, size: 20),
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: text));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Address copied!")));
+                  },
+                )
               : null,
           onTap: onTap,
         ),
@@ -1476,7 +1349,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
     return const SizedBox.shrink();
   }
 
-  Widget _buildActionButton(String heroTag, IconData icon, String label, VoidCallback onPressed) {
+  Widget _buildActionButton(
+      String heroTag, IconData icon, String label, VoidCallback onPressed) {
     return Column(
       children: [
         FloatingActionButton(
@@ -1488,79 +1362,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
         const SizedBox(height: 8),
         Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
       ],
-    );
-  }
-
-  Widget _buildTopSearchBar(MapProvider mapProvider) {
-    final user = widget.user;
-    final userName = user.displayName?.isNotEmpty == true ? user.displayName : (user.email?.split('@')[0] ?? 'Explorer');
-    final profileImageUrl = user.photoURL;
-    return Positioned(
-      top: 50.0,
-      left: 15.0,
-      right: 15.0,
-      child: Material(
-        elevation: 4.0,
-        borderRadius: BorderRadius.circular(30.0),
-        child: Container(
-          height: 58.0,
-          padding: const EdgeInsets.symmetric(horizontal: 8.0),
-          decoration: BoxDecoration(
-            color: Theme.of(context).cardColor,
-            borderRadius: BorderRadius.circular(30.0),
-          ),
-          child: Row(
-            children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                width: mapProvider.isSearching ? 0 : 48,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 200),
-                  opacity: mapProvider.isSearching ? 0 : 1,
-                  child: CircleAvatar(
-                    radius: 20,
-                    child: ClipOval(child: Image.asset('assets/images/ic_launcher_foreground.png')),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8.0),
-              Expanded(
-                child: TextField(
-                  controller: _searchController,
-                  focusNode: _searchFocusNode,
-                  onChanged: _onSearchQueryChanged,
-                  onSubmitted: (String keyword) {
-                    if (_currentUserLatLng != null) {
-                      context.read<MapProvider>().searchNearby(keyword, _currentUserLatLng!);
-                      _addToSearchHistory(SearchHistoryItem(description: keyword));
-                      _searchFocusNode.unfocus();
-                    }
-                  },
-                  decoration: InputDecoration(
-                    hintText: 'Search...',
-                    border: InputBorder.none,
-                    suffixIcon: _searchController.text.isNotEmpty
-                        ? IconButton(
-                      icon: const Icon(Icons.clear, size: 20),
-                      onPressed: _clearSearch,
-                    )
-                        : null,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8.0),
-              GestureDetector(
-                onTap: () => setState(() => _isProfileMenuVisible = true),
-                child: CircleAvatar(
-                  radius: 20,
-                  backgroundImage: profileImageUrl != null ? NetworkImage(profileImageUrl) : null,
-                  child: profileImageUrl == null ? const Icon(Icons.person) : null,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -1586,36 +1387,39 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
           child: showHistory
               ? _buildHistoryAndSavedPlacesList(mapProvider)
               : ListView.builder(
-            padding: EdgeInsets.zero,
-            shrinkWrap: true,
-            itemCount: mapProvider.suggestions.length,
-            itemBuilder: (context, index) {
-              final suggestion = mapProvider.suggestions[index];
-              return ListTile(
-                leading: const Icon(Icons.location_on_outlined),
-                title: Text(suggestion.description),
-                onTap: () {
-                  final prov = context.read<MapProvider>();
-                  _addToSearchHistory(SearchHistoryItem(
-                      placeId: suggestion.placeId,
-                      description: suggestion.description));
+                  padding: EdgeInsets.zero,
+                  shrinkWrap: true,
+                  itemCount: mapProvider.suggestions.length,
+                  itemBuilder: (context, index) {
+                    final suggestion = mapProvider.suggestions[index];
+                    return ListTile(
+                      leading: const Icon(Icons.location_on_outlined),
+                      title: Text(suggestion.description),
+                      onTap: () {
+                        final prov = context.read<MapProvider>();
+                        _addToSearchHistory(SearchHistoryItem(
+                            placeId: suggestion.placeId,
+                            description: suggestion.description));
 
-                  // --- FIX: Wait for selection to finish before stopping search ---
-                  prov.selectPlace(suggestion.placeId, suggestion.description).then((_) {
-                    if (prov.selectedPlace != null) {
-                      mapController.animateCamera(
-                          CameraUpdate.newLatLngZoom(
-                              prov.selectedPlace!.coordinates, 15));
-                    }
-                    // Clear UI manually after success
-                    _searchController.clear();
-                    _searchFocusNode.unfocus();
-                  });
-                  // DO NOT call prov.stopSearch() here; it kills the session token too early.
-                },
-              );
-            },
-          ),
+                        // --- FIX: Wait for selection to finish before stopping search ---
+                        prov
+                            .selectPlace(
+                                suggestion.placeId, suggestion.description)
+                            .then((_) {
+                          if (prov.selectedPlace != null) {
+                            mapController.animateCamera(
+                                CameraUpdate.newLatLngZoom(
+                                    prov.selectedPlace!.coordinates, 15));
+                          }
+                          // Clear UI manually after success
+                          _searchController.clear();
+                          _searchFocusNode.unfocus();
+                        });
+                        // DO NOT call prov.stopSearch() here; it kills the session token too early.
+                      },
+                    );
+                  },
+                ),
         ),
       ),
     );
@@ -1628,7 +1432,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
       listItems.add(const Padding(
         padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
         child:
-        Text("Saved Places", style: TextStyle(fontWeight: FontWeight.bold)),
+            Text("Saved Places", style: TextStyle(fontWeight: FontWeight.bold)),
       ));
       listItems.add(SizedBox(
         height: 100,
@@ -1650,7 +1454,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                 icon = Icons.star;
             }
             return GestureDetector(
-              onTap: () => _selectPlace(place.placeId, place.address),
+              onTap: () =>
+                  mapProvider.selectPlace(place.placeId, place.address),
               child: Container(
                 width: 100,
                 margin: const EdgeInsets.symmetric(horizontal: 4),
@@ -1690,7 +1495,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
           onTap: () {
             if (isPlace) {
               // --- FIX: Logic was missing here and had the same race condition ---
-              mapProvider.selectPlace(item.placeId!, item.description).then((_) {
+              mapProvider
+                  .selectPlace(item.placeId!, item.description)
+                  .then((_) {
                 if (mapProvider.selectedPlace != null) {
                   mapController.animateCamera(CameraUpdate.newLatLngZoom(
                       mapProvider.selectedPlace!.coordinates, 15));
@@ -1721,8 +1528,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
   Widget _buildProfileMenu() {
     final user = widget.user;
     final isGuest = user.isAnonymous;
-    final userName =
-    user.displayName?.isNotEmpty == true ? user.displayName : "Guest Explorer";
+    final userName = user.displayName?.isNotEmpty == true
+        ? user.displayName
+        : "Guest Explorer";
     final userEmail = user.email ?? "No email provided";
     return Positioned(
       top: 105,
@@ -1765,16 +1573,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
             ),
             const Divider(height: 1),
             ListTile(
-              leading: Icon(Icons.person_outline,
-                  color: Theme.of(context).iconTheme.color),
-              title: Text('View Profile',
-                  style: TextStyle(
-                      color: Theme.of(context).textTheme.bodyLarge?.color)),
-              onTap: () {Navigator.of(context).push(
-                MaterialPageRoute(builder: (context) => const EditProfileScreen()),
-              );
-              }
-            ),
+                leading: Icon(Icons.person_outline,
+                    color: Theme.of(context).iconTheme.color),
+                title: Text('View Profile',
+                    style: TextStyle(
+                        color: Theme.of(context).textTheme.bodyLarge?.color)),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (context) => const EditProfileScreen()),
+                  );
+                }),
             const Divider(height: 1),
             const Padding(
               padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
@@ -1790,11 +1599,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
               onChanged: (val) =>
                   setState(() => _isAdaptiveDiscoveryEnabled = val),
               secondary:
-              Icon(Icons.sensors, color: Theme.of(context).iconTheme.color),
+                  Icon(Icons.sensors, color: Theme.of(context).iconTheme.color),
             ),
             ListTile(
               leading:
-              Icon(Icons.public, color: Theme.of(context).iconTheme.color),
+                  Icon(Icons.public, color: Theme.of(context).iconTheme.color),
               title: Text('Change country',
                   style: TextStyle(
                       color: Theme.of(context).textTheme.bodyLarge?.color)),
@@ -1832,19 +1641,25 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
             ),
             // TTS VOICE SELECTION: Add ListTile for voice selection
             ListTile(
-              leading: Icon(Icons.record_voice_over, color: Theme.of(context).iconTheme.color),
-              title: Text('Voice', style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+              leading: Icon(Icons.record_voice_over,
+                  color: Theme.of(context).iconTheme.color),
+              title: Text('Voice',
+                  style: TextStyle(
+                      color: Theme.of(context).textTheme.bodyLarge?.color)),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     _availableFriendlyVoices
-                        .firstWhere((v) => v.id == _selectedTtsVoice, orElse: () => TtsVoiceInfo(id: '', displayName: 'Default'))
+                        .firstWhere((v) => v.id == _selectedTtsVoice,
+                            orElse: () =>
+                                TtsVoiceInfo(id: '', displayName: 'Default'))
                         .displayName,
                     style: TextStyle(color: Colors.grey[600]),
                   ),
                   const SizedBox(width: 4),
-                  const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+                  const Icon(Icons.arrow_forward_ios,
+                      size: 14, color: Colors.grey),
                 ],
               ),
               onTap: _showVoiceSelectorDialog,
@@ -1861,7 +1676,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
               ListTile(
                 leading: const Icon(Icons.logout, color: Colors.red),
                 title:
-                const Text('Logout', style: TextStyle(color: Colors.red)),
+                    const Text('Logout', style: TextStyle(color: Colors.red)),
                 onTap: _logout,
               ),
           ],
@@ -1880,7 +1695,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
             heroTag: "center_location",
             onPressed: _toggleFollowUserMode,
             backgroundColor:
-            _isFollowingUser ? Colors.blue : Theme.of(context).cardColor,
+                _isFollowingUser ? Colors.blue : Theme.of(context).cardColor,
             foregroundColor: _isFollowingUser
                 ? Colors.white
                 : Theme.of(context).iconTheme.color,
@@ -1913,8 +1728,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
                     width: 30,
                     child: DecoratedBox(
                         decoration: BoxDecoration(color: Colors.grey))),
-                IconButton(
-                    icon: const Icon(Icons.remove), onPressed: _zoomOut),
+                IconButton(icon: const Icon(Icons.remove), onPressed: _zoomOut),
               ],
             ),
           ),
@@ -1931,7 +1745,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Au
       markers.add(
         Marker(
           markerId: const MarkerId('userLocation'),
-          position: _positionAnimation?.value ?? _currentUserLatLng ?? _previousLatLng ?? _center,
+          position: _positionAnimation?.value ??
+              _currentUserLatLng ??
+              _previousLatLng ??
+              _center,
           icon: _userMarkerIcon!,
           rotation: _rotationAnimation?.value ?? _currentUserRotation,
           anchor: const Offset(0.5, 0.5),

@@ -34,7 +34,8 @@ class FullTransitRoute {
   final String duration;
   final String distance;
   final List<RouteStep> steps;
-  FullTransitRoute({required this.duration, required this.distance, required this.steps});
+  FullTransitRoute(
+      {required this.duration, required this.distance, required this.steps});
 }
 
 class RouteStep {
@@ -83,11 +84,16 @@ class GlassmorphicContainer extends StatelessWidget {
 
 IconData getTransitIcon(String? vehicleType) {
   switch (vehicleType) {
-    case 'BUS': return Icons.directions_bus;
-    case 'SUBWAY': return Icons.subway;
-    case 'TRAIN': return Icons.train;
-    case 'TRAM': return Icons.tram;
-    default: return Icons.transit_enterexit;
+    case 'BUS':
+      return Icons.directions_bus;
+    case 'SUBWAY':
+      return Icons.subway;
+    case 'TRAIN':
+      return Icons.train;
+    case 'TRAM':
+      return Icons.tram;
+    default:
+      return Icons.transit_enterexit;
   }
 }
 
@@ -95,12 +101,17 @@ class DirectionsScreen extends StatefulWidget {
   final PlaceDetails destination;
   final LatLng originCoordinates;
 
-  const DirectionsScreen({super.key, required this.destination, required this.originCoordinates,});
+  const DirectionsScreen({
+    super.key,
+    required this.destination,
+    required this.originCoordinates,
+  });
   @override
   State<DirectionsScreen> createState() => _DirectionsScreenState();
 }
 
-class _DirectionsScreenState extends State<DirectionsScreen> with TickerProviderStateMixin {
+class _DirectionsScreenState extends State<DirectionsScreen>
+    with TickerProviderStateMixin {
   late GoogleMapController mapController;
   final Set<Polyline> _polylines = {};
   final Set<Marker> _markers = {};
@@ -190,10 +201,14 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
   String _getDirectionAbbreviation(String instruction) {
     final lower = instruction.toLowerCase();
-    if (lower.contains('northwest') || lower.contains('north-west')) return 'NW';
-    if (lower.contains('northeast') || lower.contains('north-east')) return 'NE';
-    if (lower.contains('southwest') || lower.contains('south-west')) return 'SW';
-    if (lower.contains('southeast') || lower.contains('south-east')) return 'SE';
+    if (lower.contains('northwest') || lower.contains('north-west'))
+      return 'NW';
+    if (lower.contains('northeast') || lower.contains('north-east'))
+      return 'NE';
+    if (lower.contains('southwest') || lower.contains('south-west'))
+      return 'SW';
+    if (lower.contains('southeast') || lower.contains('south-east'))
+      return 'SE';
     if (lower.contains('north')) return 'N';
     if (lower.contains('south')) return 'S';
     if (lower.contains('east')) return 'E';
@@ -234,7 +249,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       try {
         final voices = await _flutterTts.getVoices;
         final selectedVoice = (voices as List).firstWhere(
-              (v) => (v as Map)['name'] == voiceName,
+          (v) => (v as Map)['name'] == voiceName,
           orElse: () => null,
         );
         if (selectedVoice != null) {
@@ -287,7 +302,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
   Future<void> _getSpeedLimit(LatLng point) async {
     try {
-      final apiService = Provider.of<GoogleMapsApiService>(context, listen: false);
+      final apiService =
+          Provider.of<GoogleMapsApiService>(context, listen: false);
       final data = await apiService.getSpeedLimit(point);
       final speedLimits = data['speedLimits'];
       if (speedLimits != null && speedLimits.isNotEmpty) {
@@ -346,7 +362,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         });
 
         await _getDirections();
-
       } catch (e) {
         print("CRITICAL ERROR during initialization: $e");
         if (mounted) LoadingOverlay.hide();
@@ -356,7 +371,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
   Future<String> _reverseGeocode(LatLng coordinates) async {
     try {
-      final apiService = Provider.of<GoogleMapsApiService>(context, listen: false);
+      final apiService =
+          Provider.of<GoogleMapsApiService>(context, listen: false);
       final data = await apiService.reverseGeocode(coordinates);
       if (data['status'] == 'OK' && data['results'].isNotEmpty) {
         return data['results'][0]['formatted_address'];
@@ -383,15 +399,15 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
               // If it takes too long, just return null and use the existing origin
               throw TimeoutException("Location took too long");
             },
-          );          if (locData.latitude != null && locData.longitude != null) {
+          );
+          if (locData.latitude != null && locData.longitude != null) {
             final currentLatLng = LatLng(locData.latitude!, locData.longitude!);
             // Quietly update the origin coordinate
             _origin = PlaceDetails(
                 placeId: 'user_location',
                 name: "Current Location",
                 address: "Your Location",
-                coordinates: currentLatLng
-            );
+                coordinates: currentLatLng);
             _lastLocation = currentLatLng;
           }
         }
@@ -408,10 +424,12 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     if (_avoidTolls) avoidances.add('tolls');
     if (_avoidHighways) avoidances.add('highways');
     if (_avoidFerries) avoidances.add('ferries');
-    String avoidStr = avoidances.isNotEmpty ? '&avoid=${avoidances.join('|')}' : '';
+    String avoidStr =
+        avoidances.isNotEmpty ? '&avoid=${avoidances.join('|')}' : '';
 
     try {
-      final apiService = Provider.of<GoogleMapsApiService>(context, listen: false);
+      final apiService =
+          Provider.of<GoogleMapsApiService>(context, listen: false);
       final data = await apiService.getDirections(
         origin: _origin!.coordinates,
         destination: _destination!.coordinates,
@@ -427,8 +445,10 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
               .decodePolyline(route['overview_polyline']['points'])
               .map((p) => LatLng(p.latitude, p.longitude))
               .toList();
-          final durationText = leg['duration_in_traffic']?['text'] ?? leg['duration']['text'];
-          final durationValue = leg['duration_in_traffic']?['value'] ?? leg['duration']['value'];
+          final durationText =
+              leg['duration_in_traffic']?['text'] ?? leg['duration']['text'];
+          final durationValue =
+              leg['duration_in_traffic']?['value'] ?? leg['duration']['value'];
 
           fetchedRoutes.add(RouteInfo(
             duration: durationText,
@@ -478,8 +498,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
             parsedTransitRoutes.add(FullTransitRoute(
                 duration: leg['duration']['text'],
                 distance: leg['distance']['text'],
-                steps: steps
-            ));
+                steps: steps));
           }
           _transitRoutes = parsedTransitRoutes;
         }
@@ -494,7 +513,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
             _detailedRoute = null;
 
             if (_routes.isNotEmpty) {
-              _navSteps = data['routes'][_selectedRouteIndex]['legs'][0]['steps'];
+              _navSteps =
+                  data['routes'][_selectedRouteIndex]['legs'][0]['steps'];
               _navEta = _routes[_selectedRouteIndex].duration;
               _navDistance = _routes[_selectedRouteIndex].distance;
               _updateNavInstruction();
@@ -502,7 +522,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           });
         }
       } else {
-        if(mounted) {
+        if (mounted) {
           setState(() {
             _routes = [];
             _transitRoutes = [];
@@ -512,7 +532,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       _updateMarkersAndPolylines();
     } catch (e) {
       debugPrint("Error fetching directions: $e");
-      if(mounted) {
+      if (mounted) {
         setState(() {
           _routes = [];
           _transitRoutes = [];
@@ -538,7 +558,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         _scenicRouteIndex = i;
       }
     }
-    _selectedRouteIndex = _routeType == RouteType.fastest ? _fastestRouteIndex : _scenicRouteIndex;
+    _selectedRouteIndex = _routeType == RouteType.fastest
+        ? _fastestRouteIndex
+        : _scenicRouteIndex;
   }
 
   Set<Polyline> _createTrafficPolylines(List<dynamic> steps) {
@@ -546,8 +568,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     if (steps.isEmpty) return polylines;
 
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    final Color baseColor =
-    isDarkMode ? Colors.greenAccent : Colors.blueAccent;
+    final Color baseColor = isDarkMode ? Colors.greenAccent : Colors.blueAccent;
 
     for (var i = 0; i < steps.length; i++) {
       final step = steps[i];
@@ -577,7 +598,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         startCap: Cap.roundCap,
         endCap: Cap.roundCap,
         jointType: JointType.round,
-        zIndex: 1, // IMPORTANT: Ensure this is above the grey alternative routes
+        zIndex:
+            1, // IMPORTANT: Ensure this is above the grey alternative routes
       ));
     }
     return polylines;
@@ -611,13 +633,15 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
     double dLng = endLng - startLng;
     double y = sin(dLng) * cos(endLat);
-    double x = cos(startLat) * sin(endLat) - sin(startLat) * cos(endLat) * cos(dLng);
+    double x =
+        cos(startLat) * sin(endLat) - sin(startLat) * cos(endLat) * cos(dLng);
 
     double bearing = atan2(y, x) * 180 / pi;
     return (bearing + 360) % 360;
   }
 
-  Future<BitmapDescriptor> _createTimeDifferenceMarkerBitmap(String text) async {
+  Future<BitmapDescriptor> _createTimeDifferenceMarkerBitmap(
+      String text) async {
     final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(pictureRecorder);
 
@@ -641,9 +665,11 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     final double borderRadius = 30.0;
     final Rect rect = Rect.fromLTWH(
         0, 0, textPainter.width + padding * 2, textPainter.height + padding);
-    final RRect rrect = RRect.fromRectAndRadius(rect, Radius.circular(borderRadius));
+    final RRect rrect =
+        RRect.fromRectAndRadius(rect, Radius.circular(borderRadius));
 
-    final Paint backgroundPaint = Paint()..color = Colors.black.withOpacity(0.7);
+    final Paint backgroundPaint = Paint()
+      ..color = Colors.black.withOpacity(0.7);
     final Paint borderPaint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
@@ -676,7 +702,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         final labelText = '+$differenceInMinutes min';
 
         if (route.polylinePoints.isNotEmpty) {
-          final markerPosition = route.polylinePoints[route.polylinePoints.length ~/ 2];
+          final markerPosition =
+              route.polylinePoints[route.polylinePoints.length ~/ 2];
           final icon = await _createTimeDifferenceMarkerBitmap(labelText);
 
           newMarkers.add(
@@ -708,14 +735,17 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       Marker(
           markerId: const MarkerId('origin'),
           position: _origin!.coordinates,
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)),
+          icon:
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)),
       Marker(
           markerId: const MarkerId('destination'),
           position: _destination!.coordinates),
     };
 
     if (_markerAnimationController != null) {
-      LatLng pos = _positionAnimation?.value ?? _lastLocation ?? widget.originCoordinates;
+      LatLng pos = _positionAnimation?.value ??
+          _lastLocation ??
+          widget.originCoordinates;
       double rot = _rotationAnimation?.value ?? _currentUserRotation;
 
       // Normalize rotation for display (0-360)
@@ -740,7 +770,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final Color routeColor =
-    isDarkMode ? Colors.greenAccent : Colors.blueAccent;
+        isDarkMode ? Colors.greenAccent : Colors.blueAccent;
     final Color alternativeRouteColor = Colors.grey;
 
     if (hasRoutes) {
@@ -832,9 +862,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     if (hasRoutes && _isMapControllerInitialized && !_isNavigating) {
       List<LatLng> fullRouteForBounds = isTransit
           ? _transitRoutes[_selectedRouteIndex]
-          .steps
-          .expand((s) => s.polylinePoints)
-          .toList()
+              .steps
+              .expand((s) => s.polylinePoints)
+              .toList()
           : _routes[_selectedRouteIndex].polylinePoints;
 
       if (fullRouteForBounds.isNotEmpty) {
@@ -858,6 +888,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       _updateMarkersAndPolylines();
     });
   }
+
   void _swapDirections() {
     setState(() {
       _isNavigating = false;
@@ -867,6 +898,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     });
     _getDirections();
   }
+
   void _onMapCreated(GoogleMapController controller) {
     mapController = controller;
     _isMapControllerInitialized = true;
@@ -875,16 +907,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
   List<Widget> _buildNavigationUI() {
     return [
-      // Top Card - Animate Opacity to hide when arrived
-      AnimatedOpacity(
-        opacity: _isArrived ? 0.0 : 1.0,
-        duration: const Duration(milliseconds: 500),
-        child: IgnorePointer(
-          ignoring: _isArrived, // Disable touches when hidden
-          child: _buildFuturisticTopCard(),
-        ),
-      ),
-
+      _buildFuturisticTopCard(),
       // Bottom Panel - Hide standard bottom panel when arrived
       if (!_isArrived) _buildFuturisticBottomPanel(),
 
@@ -912,7 +935,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   Widget _buildArrivalSummaryPanel() {
     final now = DateTime.now();
     final duration = _navigationStopwatch.elapsed;
-    String timeTaken = "${duration.inMinutes} min ${duration.inSeconds % 60} sec";
+    String timeTaken =
+        "${duration.inMinutes} min ${duration.inSeconds % 60} sec";
 
     // Calculate Average Speed
     String avgSpeedText = "N/A";
@@ -928,7 +952,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       left: 0,
       right: 0,
       child: Container(
-        padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(context).padding.bottom + 20),
+        padding: EdgeInsets.fromLTRB(
+            20, 20, 20, MediaQuery.of(context).padding.bottom + 20),
         decoration: BoxDecoration(
           color: Theme.of(context).scaffoldBackgroundColor,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
@@ -947,15 +972,19 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text("Trip Completed", style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold, color: Colors.green)),
+                Text("Trip Completed",
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        fontWeight: FontWeight.bold, color: Colors.green)),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                       color: Colors.amber.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.amber)
-                  ),
-                  child: Text("Auto-closing in ${_arrivalCountdown}s", style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
+                      border: Border.all(color: Colors.amber)),
+                  child: Text("Auto-closing in ${_arrivalCountdown}s",
+                      style: const TextStyle(
+                          color: Colors.amber, fontWeight: FontWeight.bold)),
                 )
               ],
             ),
@@ -968,15 +997,23 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text("ACTUAL TIME", style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
-                    Text(timeTaken, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Text("ACTUAL TIME",
+                        style: TextStyle(
+                            color: Colors.grey.shade600, fontSize: 12)),
+                    Text(timeTaken,
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
                   ],
                 ),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text("ESTIMATED", style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
-                    Text(_originalEtaText, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Text("ESTIMATED",
+                        style: TextStyle(
+                            color: Colors.grey.shade600, fontSize: 12)),
+                    Text(_originalEtaText,
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
                   ],
                 ),
               ],
@@ -987,8 +1024,11 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text("Started: ${DateFormat.jm().format(_actualTripStartTime ?? now)}", style: const TextStyle(fontWeight: FontWeight.w500)),
-                Text("Arrived: ${DateFormat.jm().format(now)}", style: const TextStyle(fontWeight: FontWeight.w500)),
+                Text(
+                    "Started: ${DateFormat.jm().format(_actualTripStartTime ?? now)}",
+                    style: const TextStyle(fontWeight: FontWeight.w500)),
+                Text("Arrived: ${DateFormat.jm().format(now)}",
+                    style: const TextStyle(fontWeight: FontWeight.w500)),
               ],
             ),
             const SizedBox(height: 16),
@@ -1007,8 +1047,12 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text("Average Speed", style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
-                      Text(avgSpeedText, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      Text("Average Speed",
+                          style: TextStyle(
+                              color: Colors.grey.shade600, fontSize: 12)),
+                      Text(avgSpeedText,
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold)),
                     ],
                   )
                 ],
@@ -1024,9 +1068,14 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green,
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
                 ),
-                child: const Text("COMPLETE TRIP", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                child: const Text("COMPLETE TRIP",
+                    style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white)),
               ),
             )
           ],
@@ -1044,8 +1093,10 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     displayMarkers.addAll(_markers.where((m) => m.markerId.value != 'origin'));
 
     if (_navigationMarkerIcon != null) {
-      final LatLng markerPosition = _positionAnimation?.value ?? _lastLocation ?? const LatLng(0,0);
-      final double markerRotation = _rotationAnimation?.value ?? _currentUserRotation;
+      final LatLng markerPosition =
+          _positionAnimation?.value ?? _lastLocation ?? const LatLng(0, 0);
+      final double markerRotation =
+          _rotationAnimation?.value ?? _currentUserRotation;
 
       displayMarkers.add(
         Marker(
@@ -1075,7 +1126,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
               builder: (context, child) {
                 return GoogleMap(
                   onMapCreated: _onMapCreated,
-                  initialCameraPosition: CameraPosition(target: widget.destination.coordinates, zoom: 12),
+                  initialCameraPosition: CameraPosition(
+                      target: widget.destination.coordinates, zoom: 12),
                   onCameraMove: (CameraPosition position) {
                     _currentZoom = position.zoom;
                   },
@@ -1091,17 +1143,18 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                     _updateNavigationMarkerIcon();
                   },
                   polylines: _polylines,
-                  markers: _buildMarkers(), // This now returns interpolated position
+                  markers:
+                      _buildMarkers(), // This now returns interpolated position
                   zoomControlsEnabled: false,
                   myLocationEnabled: false,
                   myLocationButtonEnabled: false,
                   padding: EdgeInsets.only(
                       top: _isNavigating ? 150 : 120,
-                      bottom: _isNavigating ? 100 : MediaQuery.of(context).size.height * 0.2
-                  ),
+                      bottom: _isNavigating
+                          ? 100
+                          : MediaQuery.of(context).size.height * 0.2),
                 );
-              }
-          ),
+              }),
 
           if (_isRecalculating)
             Container(
@@ -1112,7 +1165,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                   children: [
                     CircularProgressIndicator(),
                     SizedBox(height: 16),
-                    Text("Recalculating route...", style: TextStyle(color: Colors.white, fontSize: 18)),
+                    Text("Recalculating route...",
+                        style: TextStyle(color: Colors.white, fontSize: 18)),
                   ],
                 ),
               ),
@@ -1120,11 +1174,10 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           if (!_isRecalculating)
             if (_isNavigating)
               ..._buildNavigationUI()
-            else
-              ...[
-                _buildDirectionsHeader(),
-                _buildDraggableRoutePanel(),
-              ]
+            else ...[
+              _buildDirectionsHeader(),
+              _buildDraggableRoutePanel(),
+            ]
         ],
       ),
     );
@@ -1141,7 +1194,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     final ui.PictureRecorder recorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(recorder);
     final ui.Image image = await recorder.endRecording().toImage(1, 1);
-    final ByteData? data = await image.toByteData(format: ui.ImageByteFormat.png);
+    final ByteData? data =
+        await image.toByteData(format: ui.ImageByteFormat.png);
     return BitmapDescriptor.fromBytes(data!.buffer.asUint8List());
   }
 
@@ -1151,14 +1205,16 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     });
     if (_isCameraLocked && _lastLocation != null) {
       _isMovingCameraProgrammatically = true;
-      mapController.animateCamera(CameraUpdate.newCameraPosition(
+      mapController
+          .animateCamera(CameraUpdate.newCameraPosition(
         CameraPosition(
           target: _lastLocation!,
           zoom: 18,
           tilt: 50.0,
           bearing: _currentUserRotation,
         ),
-      )).then((_) {
+      ))
+          .then((_) {
         Future.delayed(const Duration(milliseconds: 500), () {
           if (mounted) _isMovingCameraProgrammatically = false;
         });
@@ -1167,7 +1223,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   }
 
   void _updateNavigationMarkers() {
-    if (!mounted || _lastLocation == null || _navigationMarkerIcon == null) return;
+    if (!mounted || _lastLocation == null || _navigationMarkerIcon == null)
+      return;
 
     final Offset anchor = const Offset(0.5, 0.5);
 
@@ -1190,7 +1247,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   Widget _buildFuturisticTopCard() {
     // 1. Determine which step to show (Live vs Browsing)
     final int displayIndex =
-    _browsingStepIndex != -1 ? _browsingStepIndex : _currentStepIndex;
+        _browsingStepIndex != -1 ? _browsingStepIndex : _currentStepIndex;
 
     // Safety Check
     if (_navSteps.isEmpty || displayIndex >= _navSteps.length) {
@@ -1201,7 +1258,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
 
     // 2. Parse Instruction Text (Simplified) based on the specific step
     String fullInstruction =
-    _stripHtmlIfNeeded(currentStep['html_instructions']);
+        _stripHtmlIfNeeded(currentStep['html_instructions']);
     String simplifiedInstruction = fullInstruction;
     RegExp exp = RegExp(r'\b(on|onto)\s+(.*)', caseSensitive: false);
     Match? match = exp.firstMatch(fullInstruction);
@@ -1212,7 +1269,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     // 3. Get Icon & Abbreviation
     final IconData icon = _getManeuverIcon(currentStep['maneuver']);
     final String directionAbbr =
-    _getDirectionAbbreviation(simplifiedInstruction);
+        _getDirectionAbbreviation(simplifiedInstruction);
 
     // 4. Get Distance
     // If viewing the current live step, show remaining distance.
@@ -1228,114 +1285,116 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       top: MediaQuery.of(context).padding.top + 60,
       left: 15,
       right: 15,
-      child: GestureDetector(
-        // --- SWIPE GESTURES ---
-        onHorizontalDragEnd: (details) {
-          if (details.primaryVelocity! < 0) {
-            // Swipe Left -> Next Turn
-            _cycleStep(1);
-          } else if (details.primaryVelocity! > 0) {
-            // Swipe Right -> Previous Turn
-            _cycleStep(-1);
-          }
-        },
-        // --- TAP TO RESET ---
-        onTap: () {
-          setState(() {
-            _browsingStepIndex = -1; // Reset to live tracking
-          });
-          _recenterCamera(); // Snap camera back to user
-        },
-        child: GlassmorphicContainer(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
+      child: AnimatedOpacity(
+        opacity: _isArrived ? 0.0 : 1.0,
+        duration: const Duration(milliseconds: 500),
+        child: IgnorePointer(
+          ignoring: _isArrived,
+          child: GestureDetector(
+            onHorizontalDragEnd: (details) {
+              if (details.primaryVelocity! < 0) {
+                _cycleStep(1);
+              } else if (details.primaryVelocity! > 0) {
+                _cycleStep(-1);
+              }
+            },
+            onTap: () {
+              setState(() {
+                _browsingStepIndex = -1;
+              });
+              _recenterCamera();
+            },
+            child: GlassmorphicContainer(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
-                          shape: BoxShape.circle,
-                        ),
-                        child:
-                        Icon(icon, color: Colors.white, size: 42),
-                      ),
-                      if (directionAbbr.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          directionAbbr,
-                          style: const TextStyle(
-                            color: Colors.amber,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 16,
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(icon, color: Colors.white, size: 42),
                           ),
+                          if (directionAbbr.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              directionAbbr,
+                              style: const TextStyle(
+                                color: Colors.amber,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ]
+                        ],
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Browsing Indicator (Optional, helpful context)
+                            if (_browsingStepIndex != -1)
+                              Text(
+                                "PREVIEWING STEP ${displayIndex + 1} OF ${_navSteps.length}",
+                                style: TextStyle(
+                                    color: Colors.amber.withOpacity(0.8),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 1.0),
+                              ),
+                            Text(
+                              simplifiedInstruction,
+                              textAlign: TextAlign.left,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                height: 1.2,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(displayDistance,
+                                style: TextStyle(
+                                    color: Colors.white.withOpacity(0.9),
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w500)),
+                          ],
                         ),
-                      ]
+                      ),
                     ],
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Browsing Indicator (Optional, helpful context)
-                        if (_browsingStepIndex != -1)
-                          Text(
-                            "PREVIEWING STEP ${displayIndex + 1} OF ${_navSteps.length}",
-                            style: TextStyle(
-                                color: Colors.amber.withOpacity(0.8),
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 1.0),
-                          ),
-                        Text(
-                          simplifiedInstruction,
-                          textAlign: TextAlign.left,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                            height: 1.2,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(displayDistance,
-                            style: TextStyle(
-                                color: Colors.white.withOpacity(0.9),
-                                fontSize: 18,
-                                fontWeight: FontWeight.w500)),
-                      ],
+                  const SizedBox(height: 16),
+                  // Only show progress bar if we are on the current live step
+                  if (displayIndex == _currentStepIndex)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: AnimatedBuilder(
+                        animation: _progressAnimationController!,
+                        builder: (context, child) {
+                          return LinearProgressIndicator(
+                            value: _progressAnimation?.value ??
+                                _progressToNextManeuver,
+                            minHeight: 6,
+                            backgroundColor: Colors.white.withOpacity(0.2),
+                            valueColor: const AlwaysStoppedAnimation<Color>(
+                                Colors.white),
+                          );
+                        },
+                      ),
                     ),
-                  ),
                 ],
               ),
-              const SizedBox(height: 16),
-              // Only show progress bar if we are on the current live step
-              if (displayIndex == _currentStepIndex)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: AnimatedBuilder(
-                    animation: _progressAnimationController!,
-                    builder: (context, child) {
-                      return LinearProgressIndicator(
-                        value: _progressAnimation?.value ??
-                            _progressToNextManeuver,
-                        minHeight: 6,
-                        backgroundColor: Colors.white.withOpacity(0.2),
-                        valueColor: const AlwaysStoppedAnimation<Color>(
-                            Colors.white),
-                      );
-                    },
-                  ),
-                ),
-            ],
+            ),
           ),
         ),
       ),
@@ -1358,6 +1417,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       _browsingStepIndex = newIndex;
     });
   }
+
   Widget _buildFuturisticBottomPanel() {
     // FIX: Calculate Arrival Time based on Remaining Time (not total trip time)
     final totalDurationSeconds = _routes[_selectedRouteIndex].durationValue;
@@ -1466,11 +1526,12 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         padding: const EdgeInsets.all(16),
         margin: const EdgeInsets.symmetric(horizontal: 16),
         decoration: BoxDecoration(
-          color: isSelected ? Colors.blue.withOpacity(0.1) : Theme.of(context).cardColor,
+          color: isSelected
+              ? Colors.blue.withOpacity(0.1)
+              : Theme.of(context).cardColor,
           border: Border.all(
               color: isSelected ? Colors.blue : Colors.grey.withOpacity(0.3),
-              width: isSelected ? 2 : 1
-          ),
+              width: isSelected ? 2 : 1),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Column(
@@ -1494,7 +1555,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                       if (step != route.steps.last)
                         const Padding(
                           padding: EdgeInsets.symmetric(horizontal: 8.0),
-                          child: Icon(Icons.arrow_forward, size: 14, color: Colors.grey),
+                          child: Icon(Icons.arrow_forward,
+                              size: 14, color: Colors.grey),
                         ),
                     ],
                   );
@@ -1521,7 +1583,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(getTransitIcon(step.vehicleType), size: 32, color: Colors.blue.shade800),
+            Icon(getTransitIcon(step.vehicleType),
+                size: 32, color: Colors.blue.shade800),
             if (step.lineName != null) ...[
               const SizedBox(width: 8),
               Text(
@@ -1540,7 +1603,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   }
 
   Widget _buildTransitPanel() {
-    if (_transitRoutes.isEmpty) return const Center(child: Text("No transit routes found."));
+    if (_transitRoutes.isEmpty)
+      return const Center(child: Text("No transit routes found."));
 
     return ListView.separated(
       shrinkWrap: true,
@@ -1554,7 +1618,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     );
   }
 
-  Widget _buildRouteDetailsContent(ScrollController scrollController, FullTransitRoute route) {
+  Widget _buildRouteDetailsContent(
+      ScrollController scrollController, FullTransitRoute route) {
     return ListView.builder(
       controller: scrollController,
       itemCount: route.steps.length,
@@ -1625,7 +1690,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       builder: (context, scrollController) {
         Widget panelContent;
         if (_travelMode == TravelMode.transit && _detailedRoute != null) {
-          panelContent = _buildRouteDetailsContent(scrollController, _detailedRoute!);
+          panelContent =
+              _buildRouteDetailsContent(scrollController, _detailedRoute!);
         } else {
           panelContent = _buildRouteSelectionContent();
         }
@@ -1650,7 +1716,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   Widget _buildRouteSelectionContent() {
     if ((_travelMode == TravelMode.transit && _transitRoutes.isEmpty) ||
         (_travelMode != TravelMode.transit && _routes.isEmpty)) {
-      return const Center(child: Text("No route found for the selected options."));
+      return const Center(
+          child: Text("No route found for the selected options."));
     }
 
     return SingleChildScrollView(
@@ -1773,7 +1840,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final Color unselectedColor =
-    isDark ? Colors.grey.shade400 : Colors.grey.shade600;
+        isDark ? Colors.grey.shade400 : Colors.grey.shade600;
     final Color color = isSelected ? Colors.green : unselectedColor;
     return GestureDetector(
       onTap: () {
@@ -1792,11 +1859,11 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           borderRadius: BorderRadius.circular(20),
           boxShadow: isSelected
               ? [
-            BoxShadow(
-                color: Colors.green.withOpacity(0.4),
-                blurRadius: 10,
-                spreadRadius: 1)
-          ]
+                  BoxShadow(
+                      color: Colors.green.withOpacity(0.4),
+                      blurRadius: 10,
+                      spreadRadius: 1)
+                ]
               : [],
         ),
         child: Column(
@@ -1807,12 +1874,13 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
                 style: TextStyle(
                     color: color,
                     fontWeight:
-                    isSelected ? FontWeight.bold : FontWeight.normal))
+                        isSelected ? FontWeight.bold : FontWeight.normal))
           ],
         ),
       ),
     );
   }
+
   Widget _buildOptionChip(
       String label, bool isSelected, Function(bool) onSelected) {
     return FilterChip(
@@ -1823,8 +1891,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       backgroundColor: Theme.of(context).dividerColor.withOpacity(0.1),
       selectedColor: Colors.green,
       labelStyle: TextStyle(
-        color:
-        isSelected ? Colors.white : Theme.of(context).textTheme.bodyLarge?.color,
+        color: isSelected
+            ? Colors.white
+            : Theme.of(context).textTheme.bodyLarge?.color,
         fontWeight: FontWeight.bold,
       ),
       side: BorderSide(
@@ -1833,6 +1902,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
               : Theme.of(context).dividerColor),
     );
   }
+
   LatLngBounds _boundsFromLatLngList(List<LatLng> list) {
     double? x0, x1, y0, y1;
     for (LatLng latLng in list) {
@@ -1846,7 +1916,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         if (latLng.longitude < y0!) y0 = latLng.longitude;
       }
     }
-    return LatLngBounds(northeast: LatLng(x1!, y1!), southwest: LatLng(x0!, y0!));
+    return LatLngBounds(
+        northeast: LatLng(x1!, y1!), southwest: LatLng(x0!, y0!));
   }
 
   Future<BitmapDescriptor> _createCircleStopMarkerBitmap() async {
@@ -1865,7 +1936,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     canvas.drawCircle(const Offset(size / 2, size / 2), size / 2, borderPaint);
     canvas.drawCircle(const Offset(size / 2, size / 2), size / 5, innerPaint);
 
-    final img = await pictureRecorder.endRecording().toImage(size.toInt(), size.toInt());
+    final img = await pictureRecorder
+        .endRecording()
+        .toImage(size.toInt(), size.toInt());
     final data = await img.toByteData(format: ui.ImageByteFormat.png);
     return BitmapDescriptor.fromBytes(data!.buffer.asUint8List());
   }
@@ -1880,7 +1953,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     _tripPathRecorded = [];
     _speedSamples.clear();
     _totalDistanceTraveledMeters = 0.0;
-    _originalEtaText = _routes[_selectedRouteIndex].duration; // Capture original estimate
+    _originalEtaText =
+        _routes[_selectedRouteIndex].duration; // Capture original estimate
     _offRouteStrikeCount = 0;
     _isArrived = false; // Reset arrival state
     _arrivalCountdown = 10; // Reset timer
@@ -1956,7 +2030,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     }
   }
 
-  double _calculateDistanceAlongPolyline(LatLng userLoc, String encodedPolyline) {
+  double _calculateDistanceAlongPolyline(
+      LatLng userLoc, String encodedPolyline) {
     List<LatLng> polyline = PolylinePoints()
         .decodePolyline(encodedPolyline)
         .map((p) => LatLng(p.latitude, p.longitude))
@@ -1967,128 +2042,141 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     int closestIndex = 0;
     double minDistance = double.infinity;
 
-    for(int i=0; i<polyline.length; i++) {
-      double d = _calculateDistance(userLoc.latitude, userLoc.longitude, polyline[i].latitude, polyline[i].longitude);
-      if(d < minDistance) {
+    for (int i = 0; i < polyline.length; i++) {
+      double d = _calculateDistance(userLoc.latitude, userLoc.longitude,
+          polyline[i].latitude, polyline[i].longitude);
+      if (d < minDistance) {
         minDistance = d;
         closestIndex = i;
       }
     }
 
     double distanceRemaining = 0.0;
-    for(int i=closestIndex; i<polyline.length-1; i++) {
+    for (int i = closestIndex; i < polyline.length - 1; i++) {
       distanceRemaining += _calculateDistance(
-          polyline[i].latitude, polyline[i].longitude,
-          polyline[i+1].latitude, polyline[i+1].longitude
-      );
+          polyline[i].latitude,
+          polyline[i].longitude,
+          polyline[i + 1].latitude,
+          polyline[i + 1].longitude);
     }
     return distanceRemaining;
   }
 
   void _listenToLocationForNavigation() {
     final locationService = Location();
-    _navigationLocationSubscription =
-        locationService.onLocationChanged.listen((LocationData currentLocation) async {
-          if (!mounted || !_isNavigating) return;
+    _navigationLocationSubscription = locationService.onLocationChanged
+        .listen((LocationData currentLocation) async {
+      if (!mounted || !_isNavigating) return;
 
-          final newLatLng = LatLng(currentLocation.latitude!, currentLocation.longitude!);
+      final newLatLng =
+          LatLng(currentLocation.latitude!, currentLocation.longitude!);
 
-          if (_lastLocation != null) {
-            double dist = _calculateDistance(_lastLocation!.latitude, _lastLocation!.longitude, newLatLng.latitude, newLatLng.longitude);
-            if (dist < 100) {
-              _totalDistanceTraveledMeters += dist;
-              _tripPathRecorded.add(newLatLng);
-            }
+      if (_lastLocation != null) {
+        double dist = _calculateDistance(_lastLocation!.latitude,
+            _lastLocation!.longitude, newLatLng.latitude, newLatLng.longitude);
+        if (dist < 100) {
+          _totalDistanceTraveledMeters += dist;
+          _tripPathRecorded.add(newLatLng);
+        }
+      }
+      if (currentLocation.speed != null && currentLocation.speed! > 0) {
+        _speedSamples.add(currentLocation.speed!);
+      }
+      _lastLocation = newLatLng;
+      final newRotation = currentLocation.heading ?? 0.0;
+      _currentUserRotation = newRotation;
+
+      if (_destination != null) {
+        double distToDest = _calculateDistance(
+            newLatLng.latitude,
+            newLatLng.longitude,
+            _destination!.coordinates.latitude,
+            _destination!.coordinates.longitude);
+
+        // Trigger Arrival if < 16 meters
+        if (distToDest < 16.0 && !_isArrived) {
+          _onArrivalDetected();
+        }
+        // Go back to navigation if user moves away (> 25 meters hysteresis)
+        else if (distToDest > 25.0 && _isArrived) {
+          _resumeNavigationFromArrival();
+        }
+      }
+
+      if (!_isRecalculating) {
+        double targetZoom = 17.5;
+        double targetTilt = 50.0;
+        double lookAheadDistance =
+            0.0005; // Roughly 50m ahead (in degrees) to keep car at bottom
+
+        if (_navSteps.isNotEmpty && _currentStepIndex < _navSteps.length) {
+          final currentStep = _navSteps[_currentStepIndex];
+          double distToTurn = _calculateDistanceAlongPolyline(
+              newLatLng, currentStep['polyline']['points']);
+
+          if (distToTurn < 100) {
+            double ratio = (100 - distToTurn) / 100; // 0.0 to 1.0
+            targetZoom = 18.0 + (2.0 * ratio); // Max zoom 20.0
+
+            targetTilt =
+                50.0 - (20.0 * ratio); // Tilts down to 30.0 at the turn
+
+            lookAheadDistance = 0.0005 * (1 - ratio);
           }
-          if (currentLocation.speed != null && currentLocation.speed! > 0) {
-            _speedSamples.add(currentLocation.speed!);
+        }
+        double headingRad = newRotation * (pi / 180.0);
+        double targetLat =
+            newLatLng.latitude + (lookAheadDistance * cos(headingRad));
+        double targetLng =
+            newLatLng.longitude + (lookAheadDistance * sin(headingRad));
+
+        mapController.animateCamera(CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: LatLng(targetLat, targetLng), // Look ahead point
+            zoom: targetZoom, // Dynamic Zoom
+            tilt: targetTilt, // Dynamic Tilt
+            bearing: newRotation,
+          ),
+        ));
+        if (_show3DCar && _isMapControllerInitialized) {
+          try {
+            ScreenCoordinate screenPos =
+                await mapController.getScreenCoordinate(newLatLng);
+            setState(() {
+              _carScreenX = screenPos.x.toDouble();
+              _carScreenY = screenPos.y.toDouble();
+            });
+          } catch (e) {
+            print("Error projecting car: $e");
           }
-          _lastLocation = newLatLng;
-          final newRotation = currentLocation.heading ?? 0.0;
-          _currentUserRotation = newRotation;
+        }
 
-          if (_destination != null) {
-            double distToDest = _calculateDistance(
-                newLatLng.latitude, newLatLng.longitude,
-                _destination!.coordinates.latitude, _destination!.coordinates.longitude
-            );
+        bool isCurrentlyOffRoute =
+            _isOffRoute(newLatLng, _routes[_selectedRouteIndex].polylinePoints);
+        if (isCurrentlyOffRoute) {
+          _offRouteStrikeCount++;
+        } else {
+          _offRouteStrikeCount = 0;
+        }
 
-            // Trigger Arrival if < 16 meters
-            if (distToDest < 16.0 && !_isArrived) {
-              _onArrivalDetected();
-            }
-            // Go back to navigation if user moves away (> 25 meters hysteresis)
-            else if (distToDest > 25.0 && _isArrived) {
-              _resumeNavigationFromArrival();
-            }
-          }
+        if (_offRouteStrikeCount >= _requiredStrikesForReroute) {
+          _offRouteStrikeCount = 0;
+          _recalculateRoute(newLatLng);
+          return;
+        }
+      }
 
-          if (!_isRecalculating) {
-            double targetZoom = 17.5;
-            double targetTilt = 50.0;
-            double lookAheadDistance = 0.0005; // Roughly 50m ahead (in degrees) to keep car at bottom
-
-            if (_navSteps.isNotEmpty && _currentStepIndex < _navSteps.length) {
-              final currentStep = _navSteps[_currentStepIndex];
-              double distToTurn = _calculateDistanceAlongPolyline(newLatLng, currentStep['polyline']['points']);
-
-              if (distToTurn < 100) {
-                double ratio = (100 - distToTurn) / 100; // 0.0 to 1.0
-                targetZoom = 18.0 + (2.0 * ratio); // Max zoom 20.0
-
-                targetTilt = 50.0 - (20.0 * ratio); // Tilts down to 30.0 at the turn
-
-                lookAheadDistance = 0.0005 * (1 - ratio);
-              }
-            }
-            double headingRad = newRotation * (pi / 180.0);
-            double targetLat = newLatLng.latitude + (lookAheadDistance * cos(headingRad));
-            double targetLng = newLatLng.longitude + (lookAheadDistance * sin(headingRad));
-
-            mapController.animateCamera(CameraUpdate.newCameraPosition(
-              CameraPosition(
-                target: LatLng(targetLat, targetLng), // Look ahead point
-                zoom: targetZoom,                     // Dynamic Zoom
-                tilt: targetTilt,                     // Dynamic Tilt
-                bearing: newRotation,
-              ),
-            ));
-            if (_show3DCar && _isMapControllerInitialized) {
-              try {
-                ScreenCoordinate screenPos = await mapController.getScreenCoordinate(newLatLng);
-                setState(() {
-                  _carScreenX = screenPos.x.toDouble();
-                  _carScreenY = screenPos.y.toDouble();
-                });
-              } catch (e) {
-                print("Error projecting car: $e");
-              }
-            }
-
-            bool isCurrentlyOffRoute = _isOffRoute(
-                newLatLng, _routes[_selectedRouteIndex].polylinePoints);
-            if (isCurrentlyOffRoute) {
-              _offRouteStrikeCount++;
-            } else {
-              _offRouteStrikeCount = 0;
-            }
-
-            if (_offRouteStrikeCount >= _requiredStrikesForReroute) {
-              _offRouteStrikeCount = 0;
-              _recalculateRoute(newLatLng);
-              return;
-            }
-          }
-
-          _updateNavigationMarkers();
-          if (!_isRecalculating) {
-            _updateNavigationState(newLatLng, newRotation);
-          }
-        });
+      _updateNavigationMarkers();
+      if (!_isRecalculating) {
+        _updateNavigationState(newLatLng, newRotation);
+      }
+    });
   }
+
   void _checkIfOffRoute(LatLng userPosition) {
     // Use a looser threshold (e.g., 60-80 meters)
-    bool isCurrentlyOffRoute = _isOffRoute(userPosition, _routes[_selectedRouteIndex].polylinePoints);
+    bool isCurrentlyOffRoute =
+        _isOffRoute(userPosition, _routes[_selectedRouteIndex].polylinePoints);
 
     if (isCurrentlyOffRoute) {
       _offRouteStrikeCount++;
@@ -2153,7 +2241,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       if (_totalDistanceTraveledMeters < 1000) {
         actualDistText = "${_totalDistanceTraveledMeters.toStringAsFixed(0)} m";
       } else {
-        actualDistText = "${(_totalDistanceTraveledMeters / 1000).toStringAsFixed(1)} km";
+        actualDistText =
+            "${(_totalDistanceTraveledMeters / 1000).toStringAsFixed(1)} km";
       }
 
       final trip = TripHistory(
@@ -2210,7 +2299,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     canvas.drawPath(path, arrowPaint);
     canvas.drawPath(path, borderPaint);
 
-    final img = await pictureRecorder.endRecording().toImage(size.toInt(), size.toInt());
+    final img = await pictureRecorder
+        .endRecording()
+        .toImage(size.toInt(), size.toInt());
     final data = await img.toByteData(format: ui.ImageByteFormat.png);
     return BitmapDescriptor.fromBytes(data!.buffer.asUint8List());
   }
@@ -2233,14 +2324,18 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   double _distanceToLineSegment(LatLng p, LatLng v, LatLng w) {
     double l2 = (w.latitude - v.latitude) * (w.latitude - v.latitude) +
         (w.longitude - v.longitude) * (w.longitude - v.longitude);
-    if (l2 == 0.0) return _calculateDistance(p.latitude, p.longitude, v.latitude, v.longitude);
+    if (l2 == 0.0)
+      return _calculateDistance(
+          p.latitude, p.longitude, v.latitude, v.longitude);
     double t = ((p.latitude - v.latitude) * (w.latitude - v.latitude) +
-        (p.longitude - v.longitude) * (w.longitude - v.longitude)) / l2;
+            (p.longitude - v.longitude) * (w.longitude - v.longitude)) /
+        l2;
     t = max(0, min(1, t));
 
     double projectionLat = v.latitude + t * (w.latitude - v.latitude);
     double projectionLng = v.longitude + t * (w.longitude - v.longitude);
-    return _calculateDistance(p.latitude, p.longitude, projectionLat, projectionLng);
+    return _calculateDistance(
+        p.latitude, p.longitude, projectionLat, projectionLng);
   }
 
   Future<void> _recalculateRoute(LatLng newOrigin) async {
@@ -2251,8 +2346,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           placeId: 'recalc_origin',
           name: 'Current Location',
           address: 'Recalculating...',
-          coordinates: newOrigin
-      );
+          coordinates: newOrigin);
     });
     await _getDirections();
   }
@@ -2271,10 +2365,9 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       _markerAnimationController?.reset();
 
       // Animate Position
-      _positionAnimation = LatLngTween(
-          begin: _previousLocation!,
-          end: currentUserPosition
-      ).animate(CurvedAnimation(
+      _positionAnimation =
+          LatLngTween(begin: _previousLocation!, end: currentUserPosition)
+              .animate(CurvedAnimation(
         parent: _markerAnimationController!,
         curve: Curves.linear,
       ));
@@ -2286,10 +2379,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       if (diff > 180) endRotation -= 360;
       if (diff < -180) endRotation += 360;
 
-      _rotationAnimation = Tween<double>(
-          begin: startRotation,
-          end: endRotation
-      ).animate(CurvedAnimation(
+      _rotationAnimation = Tween<double>(begin: startRotation, end: endRotation)
+          .animate(CurvedAnimation(
         parent: _markerAnimationController!,
         curve: Curves.easeInOut,
       ));
@@ -2342,7 +2433,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     final newProgress =
         (totalStepDistance - distanceInMeters) / totalStepDistance;
     _progressAnimation = Tween<double>(
-        begin: _progressToNextManeuver, end: newProgress.clamp(0.0, 1.0))
+            begin: _progressToNextManeuver, end: newProgress.clamp(0.0, 1.0))
         .animate(_progressAnimationController!);
     _progressAnimationController!.forward(from: 0.0);
 
@@ -2412,8 +2503,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
           eta: _navEta,
           timeRemaining: newEtaString,
           nextTurn: _navInstruction,
-          maneuverIcon: _navManeuverIcon
-      );
+          maneuverIcon: _navManeuverIcon);
     }
   }
 
@@ -2422,7 +2512,8 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     double minDst = double.infinity;
 
     for (int i = 0; i < path.length; i++) {
-      double dst = _calculateDistance(userPos.latitude, userPos.longitude, path[i].latitude, path[i].longitude);
+      double dst = _calculateDistance(userPos.latitude, userPos.longitude,
+          path[i].latitude, path[i].longitude);
       if (dst < minDst) {
         minDst = dst;
         minIndex = i;
@@ -2436,7 +2527,7 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
     final currentStep = _navSteps[_currentStepIndex];
 
     String fullInstruction =
-    _stripHtmlIfNeeded(currentStep['html_instructions']);
+        _stripHtmlIfNeeded(currentStep['html_instructions']);
     String simplifiedInstruction = fullInstruction;
 
     RegExp exp = RegExp(r'\b(on|onto)\s+(.*)', caseSensitive: false);
@@ -2464,17 +2555,28 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
   IconData _getManeuverIcon(String? maneuver) {
     if (maneuver == null) return Icons.straight;
     switch (maneuver) {
-      case 'turn-sharp-left': return Icons.turn_sharp_left;
-      case 'turn-left': return Icons.turn_left;
-      case 'turn-slight-left': return Icons.turn_slight_left;
-      case 'turn-sharp-right': return Icons.turn_sharp_right;
-      case 'turn-right': return Icons.turn_right;
-      case 'turn-slight-right': return Icons.turn_slight_right;
-      case 'uturn-left': return Icons.u_turn_left;
-      case 'uturn-right': return Icons.u_turn_right;
-      case 'roundabout-left': return Icons.roundabout_left;
-      case 'roundabout-right': return Icons.roundabout_right;
-      default: return Icons.straight;
+      case 'turn-sharp-left':
+        return Icons.turn_sharp_left;
+      case 'turn-left':
+        return Icons.turn_left;
+      case 'turn-slight-left':
+        return Icons.turn_slight_left;
+      case 'turn-sharp-right':
+        return Icons.turn_sharp_right;
+      case 'turn-right':
+        return Icons.turn_right;
+      case 'turn-slight-right':
+        return Icons.turn_slight_right;
+      case 'uturn-left':
+        return Icons.u_turn_left;
+      case 'uturn-right':
+        return Icons.u_turn_right;
+      case 'roundabout-left':
+        return Icons.roundabout_left;
+      case 'roundabout-right':
+        return Icons.roundabout_right;
+      default:
+        return Icons.straight;
     }
   }
 
@@ -2486,8 +2588,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
         c(lat1 * p) * c(lat2 * p) * (1 - c((lon2 - lon1) * p)) / 2;
     return 12742 * asin(sqrt(a)) * 1000;
   }
-
-
 
   Widget _buildSpeedLimitIndicator() {
     if (_currentSpeedLimit == null) return const SizedBox.shrink();
@@ -2521,138 +2621,6 @@ class _DirectionsScreenState extends State<DirectionsScreen> with TickerProvider
       ),
     );
   }
-
-  Widget _buildTopInstructionCard() {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    return Positioned(
-      top: MediaQuery.of(context).padding.top + 5,
-      left: 15,
-      right: 15,
-      child: Material(
-        color: isDark ? Colors.grey[900] : Colors.black.withOpacity(0.85),
-        borderRadius: BorderRadius.circular(16),
-        elevation: 4,
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Icon(_navManeuverIcon, color: Colors.white, size: 48),
-              const SizedBox(height: 8),
-              Text(
-                _navInstruction,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: AnimatedBuilder(
-                          animation: _progressAnimationController!,
-                          builder: (context, child) {
-                            return LinearProgressIndicator(
-                              value: _progressAnimation?.value ?? _progressToNextManeuver,
-                              minHeight: 10,
-                              backgroundColor: Colors.grey[700],
-                              valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
-                            );
-                          },
-                        )
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Text(_distanceToNextManeuver,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold)),
-                ],
-              )
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBottomEtaCard() {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final now = DateTime.now();
-    final arrivalTime = now.add(Duration(seconds: _routes[_selectedRouteIndex].durationValue));
-    final timeFormat = DateFormat.jm();
-
-    return Positioned(
-      bottom: MediaQuery.of(context).padding.bottom + 10,
-      left: 15,
-      right: 15,
-      child: Material(
-        color: isDark ? Colors.grey[900] : Colors.black.withOpacity(0.85),
-        borderRadius: BorderRadius.circular(16),
-        elevation: 4,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    timeFormat.format(arrivalTime),
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    "${_navDistance} · ${_navEta}",
-                    style: TextStyle(color: Colors.grey[400], fontSize: 16),
-                  ),
-                ],
-              ),
-              Row(
-                children: [
-                  CircleAvatar(
-                    backgroundColor: Colors.grey[800],
-                    child: IconButton(
-                      icon: Icon(_isMuted ? Icons.volume_off : Icons.volume_up, color: Colors.white),
-                      onPressed: () {
-                        setState(() {
-                          _isMuted = !_isMuted;
-                          if (_isMuted) {
-                            _flutterTts.stop();
-                          }
-                        });
-                        _saveMutePreference(_isMuted);
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  CircleAvatar(
-                    backgroundColor: Colors.red,
-                    child: IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white),
-                      onPressed: _stopNavigation,
-                    ),
-                  ),
-                ],
-              )
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _TransitStepWidget extends StatelessWidget {
@@ -2660,7 +2628,8 @@ class _TransitStepWidget extends StatelessWidget {
   final bool isFirst;
   final bool isLast;
 
-  const _TransitStepWidget({required this.step, this.isFirst = false, this.isLast = false});
+  const _TransitStepWidget(
+      {required this.step, this.isFirst = false, this.isLast = false});
 
   @override
   Widget build(BuildContext context) {
@@ -2695,16 +2664,21 @@ class _TransitStepWidget extends StatelessWidget {
           ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 8.0),
+              padding:
+                  const EdgeInsets.symmetric(vertical: 16.0, horizontal: 8.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(step.instruction, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  Text(step.instruction,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 16)),
                   const SizedBox(height: 4),
                   if (step.lineName != null)
-                    Text("Line: ${step.lineName}", style: TextStyle(color: Colors.grey.shade600)),
+                    Text("Line: ${step.lineName}",
+                        style: TextStyle(color: Colors.grey.shade600)),
                   const SizedBox(height: 4),
-                  Text("${step.duration} (${step.distance})", style: TextStyle(color: Colors.grey.shade600)),
+                  Text("${step.duration} (${step.distance})",
+                      style: TextStyle(color: Colors.grey.shade600)),
                 ],
               ),
             ),
@@ -2720,7 +2694,8 @@ class _TimelinePainter extends CustomPainter {
   final bool isFirst;
   final bool isLast;
 
-  _TimelinePainter({required this.mode, this.isFirst = false, this.isLast = false});
+  _TimelinePainter(
+      {required this.mode, this.isFirst = false, this.isLast = false});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -2738,10 +2713,12 @@ class _TimelinePainter extends CustomPainter {
       const double dashSpace = 4;
       double currentY = startY;
       while (currentY < endY) {
-        canvas.drawLine(Offset(centerX, currentY), Offset(centerX, currentY + dashHeight), paint);
+        canvas.drawLine(Offset(centerX, currentY),
+            Offset(centerX, currentY + dashHeight), paint);
         currentY += dashHeight + dashSpace;
       }
-    } else { // Transit mode
+    } else {
+      // Transit mode
       paint.color = Colors.blue;
       canvas.drawLine(Offset(centerX, startY), Offset(centerX, endY), paint);
     }
@@ -2762,14 +2739,17 @@ class _ConnectingTimelinePainter extends CustomPainter {
 
     if (mode == StepTravelMode.transit) {
       paint.color = Colors.blueAccent;
-      canvas.drawLine(Offset(size.width / 2, 0), Offset(size.width / 2, size.height), paint);
-    } else { // Walking mode
+      canvas.drawLine(Offset(size.width / 2, 0),
+          Offset(size.width / 2, size.height), paint);
+    } else {
+      // Walking mode
       paint.color = Colors.grey;
       const double dotSpacing = 12.0;
       double currentY = 0;
       while (currentY < size.height) {
         if (currentY + dotRadius < size.height) {
-          canvas.drawCircle(Offset(size.width / 2, currentY + dotRadius), dotRadius, paint);
+          canvas.drawCircle(
+              Offset(size.width / 2, currentY + dotRadius), dotRadius, paint);
         }
         currentY += dotSpacing;
       }
